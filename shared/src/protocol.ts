@@ -21,6 +21,8 @@ export interface CarView {
   progress: number;
   /** 교사가 숨긴 그림 */
   hidden: boolean;
+  /** 3D 모델의 앞뒤를 뒤집어 보여 줄지 */
+  flip: boolean;
   message?: string;
 }
 

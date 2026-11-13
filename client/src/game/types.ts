@@ -16,6 +16,8 @@ export interface CarLook {
   imageUrl?: string | null;
   /** 3D 변환이 끝난 GLB. 있으면 이걸 우선 씁니다. */
   glbUrl?: string | null;
+  /** 3D 모델 앞뒤 뒤집기 */
+  flip?: boolean;
 }
 
 export type CameraMode =

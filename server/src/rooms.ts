@@ -33,7 +33,7 @@ export interface RoomEvents {
   closed(code: string): void;
 }
 
-const emptyCar = (): CarView => ({ status: 'none', imageUrl: null, glbUrl: null, progress: 0, hidden: false });
+export const emptyCar = (): CarView => ({ status: 'none', imageUrl: null, glbUrl: null, progress: 0, hidden: false, flip: false });
 
 function shuffle<T>(a: T[]): T[] {
   const r = [...a];

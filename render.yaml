@@ -1,0 +1,25 @@
+# Render.com 무료 플랜 배포 설정. (New → Blueprint 로 이 저장소를 고르면 됩니다)
+services:
+  - type: web
+    name: drawing-racing
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: GENERATOR
+        value: pregenerated
+      - key: RETENTION_HOURS
+        value: "24"
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: SUPABASE_URL
+        value: https://jucuqdiihcyqpjbttovf.supabase.co
+      - key: SUPABASE_SERVICE_KEY
+        sync: false

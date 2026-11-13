@@ -9,6 +9,8 @@ import { TouchControls } from '../game/TouchControls';
 import { Countdown, Hud } from '../game/Hud';
 import { looksOf, ResultList } from './Host';
 import { navigate } from '../router';
+import { Showroom } from '../game/Showroom';
+import { flipCar, removeDrawing, uploadDrawing } from '../net/upload';
 
 const KEY = 'racing.player';
 interface Saved { code: string; playerId: string; token: string; name: string }
@@ -127,6 +129,7 @@ function PlayLobby({ room, me, onLeave }: { room: RoomView; me: Saved; onLeave: 
         <div className="me-room">방 {room.code}</div>
       </div>
       <div className="card status-card">{status}</div>
+      {mine && <MyCar room={room} me={me} />}
       {room.phase === 'results' && room.lastResults && myResult && (
         <div className="card result"><ResultList results={room.lastResults} meId={me.playerId} /></div>
       )}
@@ -185,6 +188,67 @@ function PlayRace({ room, meId }: { room: RoomView; meId: string }) {
       {live.countdown <= 3 && live.countdown > -1 && <Countdown n={Math.max(0, live.countdown)} />}
       {!done && <TouchControls flags={controls.touch} />}
       {done && <div className="finish-flag">🏁 도착! {place}등</div>}
+    </div>
+  );
+}
+
+/** 내 차 카드: 그림 올리기, 변환 진행 상황, 앞뒤 바꾸기 */
+function MyCar({ room, me }: { room: RoomView; me: Saved }) {
+  const mine = room.players.find((p) => p.id === me.playerId)!;
+  const car = mine.car;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const input = useRef<HTMLInputElement>(null);
+  const look = useMemo(() => looksOf(room, [me.playerId]), [room, me.playerId]);
+  const hasDrawing = car.status !== 'none';
+
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setError('');
+    try { await fn(); } catch (e) { setError((e as Error).message); }
+    setBusy(false);
+  };
+  const pick = (file: File | undefined) => {
+    if (file) void run(() => uploadDrawing(me, file));
+    if (input.current) input.current.value = '';
+  };
+
+  let text = '종이에 그린 자동차를 사진으로 찍어 올려 보세요!';
+  if (busy) text = '그림을 정리하고 있어요… ✂️';
+  else if (car.hidden) text = '선생님이 이 그림을 잠시 가렸어요. 다른 그림을 올려 볼까요?';
+  else if (car.status === 'processing') text = '3D 자동차로 변신하는 중! 기다리는 동안에도 그림 차로 달릴 수 있어요.';
+  else if (car.status === 'ready') text = '3D 자동차 완성! ✨';
+  else if (car.status === 'failed') text = car.message ?? '3D 변신은 못 했지만 그림 차로 달릴 수 있어요!';
+  else if (car.status === 'drawing') text = '내 그림이 자동차가 됐어요! 이 차로 달려요 🎨';
+
+  return (
+    <div className="card mycar">
+      <b className="mycar-title">🚗 내 자동차</b>
+      <Showroom looks={look} labels={false} className="mycar-view" />
+      <div className="mycar-text">{text}</div>
+      {car.status === 'processing' && (
+        <div className="progress"><div style={{ width: `${Math.round(car.progress * 100)}%` }} /></div>
+      )}
+      <div className="error">{error}</div>
+      <input ref={input} type="file" accept="image/*" hidden onChange={(e) => pick(e.target.files?.[0])} />
+      <div className="row">
+        <button className="btn primary" disabled={busy} onClick={() => input.current?.click()}>
+          📷 {hasDrawing ? '다시 올리기' : '그림 올리기'}
+        </button>
+        {hasDrawing && !car.hidden && (
+          <button className="btn white" disabled={busy} onClick={() => run(() => flipCar(me))}>↔ 앞뒤 바꾸기</button>
+        )}
+        {hasDrawing && (
+          <button className="btn white small" disabled={busy} onClick={() => run(() => removeDrawing(me))}>기본 차로</button>
+        )}
+      </div>
+      {!hasDrawing && (
+        <ul className="draw-tips">
+          <li>자동차를 <b>옆에서 본 모습</b>으로, 종이에 <b>크게</b> 그려요.</li>
+          <li>진한 색으로 칠하고, 사진은 <b>그림이 화면에 꽉 차게</b> 찍어요.</li>
+          <li>이름이나 얼굴은 그리지 않아요.</li>
+        </ul>
+      )}
     </div>
   );
 }

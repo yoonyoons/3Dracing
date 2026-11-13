@@ -8,6 +8,7 @@ import { RaceScene } from '../game/RaceScene';
 import { Countdown, formatTime } from '../game/Hud';
 import type { CameraMode, CarLook } from '../game/types';
 import { navigate } from '../router';
+import { PodiumScene, Showroom } from '../game/Showroom';
 
 const KEY = 'racing.host';
 
@@ -18,6 +19,7 @@ export function looksOf(room: RoomView, ids?: string[]): CarLook[] {
       id: p.id, name: p.name, color: p.color,
       imageUrl: p.car.hidden ? null : p.car.imageUrl,
       glbUrl: p.car.hidden ? null : p.car.glbUrl,
+      flip: p.car.flip,
     }));
 }
 
@@ -123,8 +125,18 @@ function HostLobby({ room }: { room: RoomView }) {
   const nameOf = (id: string) => room.players.find((p) => p.id === id)?.name ?? '(나감)';
   const needHeats = online > room.settings.heatSize;
 
+  // 부적절한 그림은 대기실에서 바로 가릴 수 있습니다(학생 화면과 레이스에서 기본 차로 보임).
+  const hide = (playerId: string, hidden: boolean) => {
+    const saved = loadSession<{ hostToken: string }>(KEY);
+    void fetch(`/api/rooms/${room.code}/hide/${playerId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-host-token': saved?.hostToken ?? '' },
+      body: JSON.stringify({ hidden }),
+    });
+  };
+
   const close = () => {
-    if (window.confirm('방을 닫을까요? 학생들이 모두 나가게 됩니다.')) {
+    if (window.confirm('방을 닫을까요?\n학생들이 모두 나가고, 이 방의 그림과 3D 모델이 삭제됩니다.')) {
       socket.emit('host:close');
       saveSession(KEY, null);
     }
@@ -149,6 +161,8 @@ function HostLobby({ room }: { room: RoomView }) {
           </div>
         </div>
 
+        {room.players.length > 0 && <Showroom looks={looksOf(room)} />}
+
         <div className="player-grid">
           {room.players.length === 0 && <div className="empty">학생들이 들어오면 여기에 나타나요 🙌</div>}
           {room.players.map((p) => (
@@ -156,8 +170,13 @@ function HostLobby({ room }: { room: RoomView }) {
               <span className="dot" style={{ background: p.color }} />
               <span className="player-name">{p.name}</span>
               <span className="player-car" title="차 상태">
-                {p.car.status === 'ready' ? '✨' : p.car.status === 'processing' ? '⏳' : p.car.imageUrl ? '🎨' : '🚗'}
+                {p.car.hidden ? '🙈' : p.car.status === 'ready' ? '✨' : p.car.status === 'processing' ? '⏳' : p.car.status !== 'none' ? '🎨' : '🚗'}
               </span>
+              {p.car.status !== 'none' && (
+                <button className="kick" title={p.car.hidden ? '그림 다시 보이기' : '그림 숨기기'} onClick={() => hide(p.id, !p.car.hidden)}>
+                  {p.car.hidden ? '👁' : '🙈'}
+                </button>
+              )}
               <button className="kick" title="내보내기" onClick={() => socket.emit('host:kick', p.id)}>✕</button>
             </div>
           ))}
@@ -286,15 +305,21 @@ function HostPodium({ room }: { room: RoomView }) {
   const socket = getSocket();
   const results = room.finalResults ?? [];
   const medal = ['🥇', '🥈', '🥉'];
+  const all = looksOf(room);
+  const top = results.slice(0, 3).map((r) => all.find((l) => l.id === r.id)).filter((l): l is CarLook => !!l);
   return (
-    <div className="page center">
+    <div className="page center podium-page">
+      <div className="confetti" aria-hidden>
+        {Array.from({ length: 36 }, (_, i) => <i key={i} style={{ left: `${(i * 37) % 100}%`, animationDelay: `${(i % 9) * 0.35}s`, background: ['#ff5a5f', '#ffd23f', '#2ec4b6', '#3a86ff', '#8338ec'][i % 5] }} />)}
+      </div>
       <h1>🏆 시상대</h1>
+      {top.length > 0 && <PodiumScene looks={top} />}
       <div className="podium-simple">
-        {results.slice(0, 3).map((r, i) => (
-          <div key={r.id} className={`card podium-card p${i + 1}`}>
+        {[1, 0, 2].filter((i) => results[i]).map((i) => (
+          <div key={results[i].id} className={`card podium-card p${i + 1}`}>
             <div className="medal">{medal[i]}</div>
-            <b>{r.name}</b>
-            <span>{r.time !== null ? formatTime(r.time) : ''}</span>
+            <b>{results[i].name}</b>
+            <span>{results[i].time !== null ? formatTime(results[i].time!) : ''}</span>
           </div>
         ))}
       </div>

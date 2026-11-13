@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import type { CarLook } from './types';
+import { DrawingCar } from './DrawingCar';
+import { GlbCar } from './GlbCar';
 
 const wheelGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.45, 12);
 wheelGeo.rotateZ(Math.PI / 2);
@@ -61,7 +63,13 @@ export function KartModel({ color }: { color: string }) {
   );
 }
 
-/** 차 한 대의 겉모습. (3·4단계에서 그림 차체와 GLB가 추가됩니다) */
+/**
+ * 차 한 대의 겉모습을 고릅니다.
+ * 3D 모델(GLB) → 그림으로 만든 차체 → 기본 카트 순서로, 앞의 것이 없거나 실패하면 다음 것을 씁니다.
+ */
 export function CarModel({ look }: { look: CarLook }) {
-  return <KartModel color={look.color} />;
+  const kart = <KartModel color={look.color} />;
+  const drawing = look.imageUrl ? <DrawingCar url={look.imageUrl} fallback={kart} /> : kart;
+  if (look.glbUrl) return <GlbCar url={look.glbUrl} flip={look.flip} fallback={drawing} />;
+  return drawing;
 }
