@@ -60,8 +60,8 @@ function CarEntity({ look, getCar, showName }: { look: CarLook; getCar: (id: str
       <CarModel look={look} />
       <mesh ref={flame} geometry={flameGeo} material={flameMat} visible={false} />
       {showName && (
-        <sprite position={[0, 3.6, 0]} scale={[5.2, 1.3, 1]}>
-          <spriteMaterial map={tex} depthTest={false} transparent />
+        <sprite position={[0, 3.4, 0]} scale={[0.2, 0.05, 1]}>
+          <spriteMaterial map={tex} depthTest={false} transparent sizeAttenuation={false} />
         </sprite>
       )}
     </group>
@@ -117,7 +117,7 @@ function CameraRig({ camera: mode, getCars, getLeaderId }: {
     look.set(c.x, 0, c.z);
     if (!init.current) { target.current.copy(look); init.current = true; }
     target.current.lerp(look, Math.min(1, 2.5 * dt));
-    tmp.set(target.current.x * 0.75, 46, target.current.z * 0.75 + 44);
+    tmp.set(target.current.x * 0.9, 30, target.current.z * 0.9 + 30);
     cam.position.lerp(tmp, Math.min(1, 3 * dt));
     cam.lookAt(target.current);
   });
@@ -142,6 +142,8 @@ export interface RaceSceneProps {
 }
 
 export function RaceScene({ track, looks, getCars, camera, getLeaderId, onFrame, showNames = true }: RaceSceneProps) {
+  // 내 차를 뒤에서 볼 때 내 이름표는 가리기만 하므로 숨깁니다.
+  const hideId = camera.mode === 'chase' ? camera.followId : null;
   const getCar = (id: string) => getCars().find((c) => c.id === id);
   return (
     <Canvas
@@ -157,7 +159,7 @@ export function RaceScene({ track, looks, getCars, camera, getLeaderId, onFrame,
       <FrameHook onFrame={onFrame} />
       <TrackMesh track={track} />
       {looks.map((l) => (
-        <CarEntity key={l.id} look={l} getCar={getCar} showName={showNames} />
+        <CarEntity key={l.id} look={l} getCar={getCar} showName={showNames && l.id !== hideId} />
       ))}
       <CameraRig camera={camera} getCars={getCars} getLeaderId={getLeaderId} />
     </Canvas>
