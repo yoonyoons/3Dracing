@@ -146,14 +146,38 @@ Higgsfield 크레딧 참고(테스트 시점 견적): `sam_3_3d` 1크레딧(측�
 
 ## 배포
 
+### 인터넷에 올리기: Render (무료)
+
+학교 와이파이가 기기끼리의 통신을 막거나, 주소 하나로 어디서든 쓰고 싶을 때 씁니다. 5분쯤 걸립니다.
+
+1. https://render.com 에서 **GitHub 계정으로 가입/로그인**합니다.
+2. 아래 주소를 엽니다. (또는 Render 대시보드 → **New → Blueprint** → 이 저장소 선택)
+
+   https://render.com/deploy?repo=https://github.com/yoonyoons/3Dracing
+
+3. 저장소 접근을 허용하면 `render.yaml` 을 읽어 설정이 자동으로 채워집니다. 입력 칸이 세 개 나옵니다.
+   - `TEACHER_CODE`: **방을 만들 때 쓸 교사 코드**를 정해서 넣습니다. (학생에게 알려 주지 않는 암호)
+   - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`: 비워 둬도 됩니다. (아래 "저장소: Supabase" 참고)
+4. **Apply / Deploy** 를 누르고 3~5분 기다리면 `https://drawing-racing-xxxx.onrender.com` 같은 주소가 생깁니다.
+5. 관리자 비밀번호는 Render 가 자동으로 만듭니다. 대시보드 → 서비스 → **Environment** → `ADMIN_PASSWORD` 에서 확인합니다.
+6. 그 주소로 들어가 **선생님: 방 만들기** → 교사 코드 입력 → 방 만들기. QR 코드에는 배포 주소가 자동으로 들어갑니다.
+
+알아 둘 점:
+
+- 무료 플랜은 **15분간 접속이 없으면 잠듭니다.** 다시 깨어나는 데 1분쯤 걸리니 수업 5분 전에 주소를 한 번 열어 두세요.
+- 잠들거나 다시 배포되면 **진행 중이던 방과 (Supabase 를 안 쓸 때) 올린 그림이 사라집니다.** 수업 한 시간 동안은 접속이 계속 있으므로 잠들지 않습니다.
+- 서버 위치는 싱가포르입니다. 한국에서 조작 반응이 교실 와이파이 방식보다 조금 느릴 수 있습니다.
+- 서버 한 대가 방 상태를 메모리에 갖고 있으므로 **인스턴스는 1개**로 둡니다.
+- 코드를 고쳐 이 브랜치에 푸시하면 자동으로 다시 배포됩니다.
+
+### 다른 방법
+
 | 방법 | 비용 | 특징 |
 |---|---|---|
-| **교사 노트북 + 교실 와이파이** (추천) | 무료 | 설치만 하면 끝. 학교 방화벽 영향이 가장 적음 |
-| **Render.com** | 무료 플랜 | `render.yaml` 포함. 15분간 접속이 없으면 잠들어 첫 접속이 느림 → 수업 전에 미리 열어 두기. Supabase 저장소 필요 |
-| **Docker** | 서버에 따라 | `docker build -t drawing-racing . && docker run -p 3000:3000 drawing-racing` |
+| **교사 노트북 + 교실 와이파이** | 무료 | `npm start` 만 하면 끝. 반응이 가장 빠르고 그림이 학교 밖으로 나가지 않음 |
+| **Docker** | 서버에 따라 | `docker build -t drawing-racing . && docker run -p 3000:3000 -e TEACHER_CODE=... drawing-racing` |
 
-인터넷에 배포하면 `PUBLIC_URL` 과 `ADMIN_PASSWORD` 를 꼭 설정하세요.
-서버 한 대가 방 상태를 메모리에 갖고 있으므로 **인스턴스는 1개**로 운영합니다.
+인터넷에 공개할 때는 `TEACHER_CODE` 와 `ADMIN_PASSWORD` 를 꼭 설정하세요. `TEACHER_CODE` 가 없으면 주소를 아는 누구나 방을 만들 수 있습니다.
 
 ---
 
