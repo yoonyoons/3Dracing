@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,6 +27,14 @@ function lanAddresses(): string[] {
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', true);
+app.use(compression());
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  next();
+});
 
 const server = http.createServer(app);
 export const { io, rooms } = createSockets(server);
@@ -34,7 +43,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, rooms: rooms.rooms.si
 
 // 교사 노트북에서 localhost 로 열었을 때 학생이 접속할 주소(QR)를 알려 줍니다.
 app.get('/api/info', (_req, res) => {
-  res.json({ publicUrl: config.publicUrl, lan: lanAddresses().map((a) => `http://${a}:${PORT}`) });
+  res.json({ publicUrl: config.publicUrl, needsTeacherCode: !!config.teacherCode, lan: lanAddresses().map((a) => `http://${a}:${PORT}`) });
 });
 
 export const cars = new CarService(createStorage(), createCarStore(), createGenerator(), rooms);
@@ -57,6 +66,7 @@ server.listen(PORT, () => {
   for (const a of lanAddresses()) console.log(`   학생 기기에서:  http://${a}:${PORT}`);
   console.log(`   3D 변환 모드:   ${cars.generator.name}${cars.generator.realtime ? ' (실시간)' : ' (교사가 관리자 화면에서 GLB 업로드)'}`);
   console.log(`   저장소:         ${useSupabase ? 'Supabase Storage' : '이 컴퓨터의 data 폴더'} · ${config.retentionHours}시간 뒤 자동 삭제`);
+  console.log(`   교사 코드:       ${config.teacherCode ? '설정됨 (방을 만들 때 입력)' : '없음 — 누구나 방을 만들 수 있어요. 인터넷에 올릴 때는 TEACHER_CODE 를 설정하세요'}`);
   console.log(`   관리자 비밀번호: ${config.adminPasswordGenerated ? config.adminPassword + '  (서버를 켤 때마다 바뀜. .env 의 ADMIN_PASSWORD 로 고정 가능)' : '(.env 에 설정됨)'}`);
   console.log('');
 });

@@ -64,7 +64,13 @@ export function Host() {
   const { room, connected, setRoom } = useRoom();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [needCode, setNeedCode] = useState(false);
+  const [teacherCode, setTeacherCode] = useState('');
   const socket = getSocket();
+
+  useEffect(() => {
+    fetch('/api/info').then((r) => r.json()).then((i) => setNeedCode(!!i.needsTeacherCode)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     document.title = '선생님 화면 · 드로잉 레이싱';
@@ -85,7 +91,7 @@ export function Host() {
   const create = () => {
     setBusy(true);
     setError('');
-    socket.timeout(5000).emit('host:create', (err, res) => {
+    socket.timeout(5000).emit('host:create', { teacherCode }, (err, res) => {
       setBusy(false);
       if (err) return setError('서버에 연결할 수 없어요. 잠시 후 다시 눌러 주세요.');
       if (!res.ok) return setError(res.error);
@@ -99,6 +105,11 @@ export function Host() {
         <div className="hero-emoji">👩‍🏫</div>
         <h1>선생님 화면</h1>
         <p className="sub">방을 만들고 이 화면을 프로젝터에 띄워 주세요.</p>
+        {needCode && (
+          <input className="field narrow" type="password" autoComplete="off" placeholder="교사 코드"
+            value={teacherCode} onChange={(e) => setTeacherCode(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') create(); }} />
+        )}
         <button className="btn primary big-inline" onClick={create} disabled={busy}>방 만들기</button>
         <div className="error">{error}</div>
         <button className="btn white small" onClick={() => navigate('/')}>← 처음으로</button>

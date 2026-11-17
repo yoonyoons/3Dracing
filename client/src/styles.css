@@ -194,3 +194,5 @@ input.field:focus { border-color: var(--sky); }
 .admin-car-status { font-size: 14px; font-weight: 700; }
 a.btn { text-decoration: none; display: inline-block; }
 label.btn { display: inline-block; }
+
+input.field.narrow { width: min(320px, 100%); }

@@ -1,7 +1,9 @@
 import type { Server as HttpServer } from 'node:http';
 import { Server } from 'socket.io';
 import type { ClientToServer, ServerToClient } from '@racing/shared';
+import crypto from 'node:crypto';
 import { RoomManager } from './rooms';
+import { config } from './config';
 
 interface SocketData {
   role?: 'host' | 'player';
@@ -33,8 +35,18 @@ export function createSockets(server: HttpServer): { io: IO; rooms: RoomManager 
   io.on('connection', (socket) => {
     const hostRoom = () => (socket.data.role === 'host' && socket.data.code ? rooms.get(socket.data.code) : undefined);
 
-    socket.on('host:create', (cb) => {
+    let badCodes = 0;
+    socket.on('host:create', (p, cb) => {
       if (typeof cb !== 'function') return;
+      if (config.teacherCode) {
+        const given = crypto.createHash('sha256').update(String(p?.teacherCode ?? '').trim()).digest();
+        const want = crypto.createHash('sha256').update(config.teacherCode).digest();
+        if (badCodes >= 5) return cb({ ok: false, error: '잠시 후 다시 시도해 주세요.' });
+        if (!crypto.timingSafeEqual(given, want)) {
+          badCodes++;
+          return cb({ ok: false, error: '교사 코드가 달라요.' });
+        }
+      }
       const room = rooms.create();
       if (typeof room === 'string') return cb({ ok: false, error: room });
       socket.data.role = 'host';

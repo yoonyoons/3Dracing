@@ -98,7 +98,7 @@ export interface Snap {
 export type Ack<T> = (res: ({ ok: true } & T) | { ok: false; error: string }) => void;
 
 export interface ClientToServer {
-  'host:create': (cb: Ack<{ code: string; hostToken: string }>) => void;
+  'host:create': (p: { teacherCode?: string }, cb: Ack<{ code: string; hostToken: string }>) => void;
   'host:resume': (p: { code: string; hostToken: string }, cb: Ack<{}>) => void;
   'host:settings': (p: Partial<RoomSettings>) => void;
   'host:plan': () => void;

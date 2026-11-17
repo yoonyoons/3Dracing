@@ -15,7 +15,10 @@ const mode = (process.env.GENERATOR ?? 'pregenerated').toLowerCase();
 // 모든 비밀 값은 서버 환경변수(.env)에서만 읽습니다. 클라이언트로 보내는 코드는 없습니다.
 export const config = {
   port: num(process.env.PORT, 3000),
-  publicUrl: process.env.PUBLIC_URL?.replace(/\/$/, '') || null,
+  // Render 에 올리면 RENDER_EXTERNAL_URL 이 자동으로 들어옵니다.
+  publicUrl: (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '') || null,
+  /** 방을 만들 때 필요한 교사 코드. 인터넷에 공개 배포할 때 꼭 설정하세요. */
+  teacherCode: (process.env.TEACHER_CODE || '').trim(),
   dataDir: path.resolve(process.env.DATA_DIR ?? path.resolve(__dirname, '../../data')),
   adminPassword: process.env.ADMIN_PASSWORD || '',
   adminPasswordGenerated: false,
