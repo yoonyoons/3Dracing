@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { Track } from '@racing/shared';
 import { TrackMesh } from './TrackMesh';
 import { CarModel } from './CarModel';
+import { AdaptiveDpr, initialDpr } from './AdaptiveDpr';
 import type { CameraMode, CarLook, RenderCar } from './types';
 
 function nameTexture(name: string, color: string): THREE.CanvasTexture {
@@ -145,10 +146,11 @@ export function RaceScene({ track, looks, getCars, camera, getLeaderId, onFrame,
   // 내 차를 뒤에서 볼 때 내 이름표는 가리기만 하므로 숨깁니다.
   const hideId = camera.mode === 'chase' ? camera.followId : null;
   const getCar = (id: string) => getCars().find((c) => c.id === id);
+  const [dpr, setDpr] = useState(initialDpr);
   return (
     <Canvas
       className="race-canvas"
-      dpr={[1, 1.5]}
+      dpr={dpr}
       gl={{ antialias: true, powerPreference: 'high-performance' }}
       camera={{ fov: 64, near: 0.5, far: 900, position: [0, 120, 80] }}
     >
@@ -157,6 +159,7 @@ export function RaceScene({ track, looks, getCars, camera, getLeaderId, onFrame,
       <ambientLight intensity={1.5} />
       <directionalLight position={[60, 120, 40]} intensity={1.6} />
       <FrameHook onFrame={onFrame} />
+      <AdaptiveDpr dpr={dpr} onChange={setDpr} />
       <TrackMesh track={track} />
       {looks.map((l) => (
         <CarEntity key={l.id} look={l} getCar={getCar} showName={showNames && l.id !== hideId} />
