@@ -1,7 +1,8 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { CarModel } from './CarModel';
+import { AdaptiveDpr, initialDpr } from './AdaptiveDpr';
 import type { CarLook } from './types';
 
 function nameTexture(name: string, color: string): THREE.CanvasTexture {
@@ -51,18 +52,40 @@ function Spinner({ look, position, label, speed = 0.7 }: { look: CarLook; positi
   );
 }
 
+const corner = new THREE.Vector3();
+
 function FitCamera({ cols, rows, cell }: { cols: number; rows: number; cell: number }) {
   const { camera, size } = useThree();
+  const fitted = useRef('');
   useFrame(() => {
+    const key = `${cols}x${rows}@${size.width}x${size.height}`;
+    if (fitted.current === key) return;
+    fitted.current = key;
     const cam = camera as THREE.PerspectiveCamera;
-    const w = cols * cell;
-    const d = rows * cell;
-    const aspect = size.width / size.height;
-    const half = Math.tan((cam.fov * Math.PI) / 360);
-    // 가로·세로 모두 들어오는 거리
-    const dist = Math.max(w / 2 / (half * aspect), (d * 0.6 + 2.6) / 2 / half) * 1.05 + 1.5;
-    cam.position.set(0, dist * 0.62, dist * 0.8);
-    cam.lookAt(0, 0.7, 0.4);
+    cam.aspect = size.width / size.height;
+    cam.updateProjectionMatrix();
+    // 차가 놓인 상자의 모서리 8개가 모두 화면 안(가장자리 8% 여유)에 들어오는 가장 가까운 거리를 찾습니다.
+    const hw = (cols * cell) / 2;
+    const hd = (rows * cell) / 2 + 1;
+    const place = (dist: number) => {
+      cam.position.set(0, dist * 0.6, dist * 0.8);
+      cam.lookAt(0, 0.6, 0.6);
+      cam.updateMatrixWorld();
+    };
+    const fits = (dist: number) => {
+      place(dist);
+      for (const x of [-hw, hw]) for (const y of [0, 2.6]) for (const z of [-hd, hd]) {
+        corner.set(x, y, z).project(cam);
+        if (Math.abs(corner.x) > 0.92 || Math.abs(corner.y) > 0.92 || corner.z > 1) return false;
+      }
+      return true;
+    };
+    let lo = 3, hi = 400;
+    for (let i = 0; i < 30; i++) {
+      const mid = (lo + hi) / 2;
+      if (fits(mid)) hi = mid; else lo = mid;
+    }
+    place(hi);
   });
   return null;
 }
@@ -73,17 +96,20 @@ export function Showroom({ looks, labels = true, className = 'showroom' }: { loo
   const cols = n <= 3 ? n : n <= 8 ? Math.ceil(n / 2) : n <= 18 ? Math.ceil(n / 3) : Math.ceil(n / 4);
   const rows = Math.ceil(n / cols);
   const cell = 6.4;
+  const [dpr, setDpr] = useState(initialDpr);
   return (
-    <Canvas className={className} dpr={[1, 1.5]} camera={{ fov: 40, near: 0.5, far: 400 }} gl={{ antialias: true, alpha: true }}>
+    <Canvas className={className} dpr={dpr} camera={{ fov: 40, near: 0.5, far: 400 }} gl={{ antialias: true, alpha: true }}>
       <ambientLight intensity={1.6} />
       <directionalLight position={[20, 40, 30]} intensity={1.5} />
       <FitCamera cols={cols} rows={rows} cell={cell} />
+      <AdaptiveDpr dpr={dpr} onChange={setDpr} />
       {looks.map((l, i) => {
         const r = Math.floor(i / cols);
         const inRow = r === rows - 1 ? n - r * cols : cols;
         const x = ((i % cols) - (inRow - 1) / 2) * cell;
         const z = (r - (rows - 1) / 2) * cell;
-        return <Spinner key={l.id} look={l} position={[x, 0, z]} label={labels} />;
+        // 차가 많으면 이름표가 너무 작아 읽을 수 없으니 숨깁니다(이름은 아래 목록에 있음).
+        return <Spinner key={l.id} look={l} position={[x, 0, z]} label={labels && n <= 12} />;
       })}
     </Canvas>
   );

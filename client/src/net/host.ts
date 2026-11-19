@@ -83,8 +83,11 @@ export class HostController {
     return !!loadJson<Saved>(KEY);
   }
 
+  private readonly onPageHide = () => this.persist();
+
   private async connect(): Promise<void> {
     this.persist();
+    window.addEventListener('pagehide', this.onPageHide);
     const code = this.code;
     [this.lobby, this.join, this.race] = await Promise.all([
       openChannel(`lobby:${code}`),
@@ -110,7 +113,10 @@ export class HostController {
   }
 
   private onRoom(v: RoomView): void {
+    // 단계가 바뀌면(레이스 끝 등) 바로 저장합니다. 곧바로 새로고침해도 결과가 남도록.
+    const phaseChanged = v.phase !== this.view?.phase;
     this.view = v;
+    if (phaseChanged) this.persist();
     for (const fn of this.listeners) fn(v);
     this.scheduleSend();
     this.scheduleSave();
@@ -263,6 +269,7 @@ export class HostController {
   }
 
   dispose(): void {
+    window.removeEventListener('pagehide', this.onPageHide);
     this.room.dispose();
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
