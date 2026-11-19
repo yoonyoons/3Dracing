@@ -1,7 +1,10 @@
 import { createClient, type RealtimeChannel } from '@supabase/supabase-js';
 
-const url = import.meta.env.VITE_SUPABASE_URL as string;
-const key = import.meta.env.VITE_SUPABASE_KEY as string;
+// Supabase 프로젝트 주소와 "공개용(publishable)" 키. 브라우저에 공개돼도 되는 값이라 코드에 둡니다.
+// (비밀 키가 아닙니다. 데이터는 데이터베이스 함수가 교사 코드·관리자 비밀번호·학생 비밀 값으로 지킵니다.)
+// 다른 Supabase 프로젝트를 쓰려면 VITE_SUPABASE_URL / VITE_SUPABASE_KEY 환경변수로 바꿀 수 있습니다.
+const url = (import.meta.env.VITE_SUPABASE_URL as string | undefined) || 'https://jucuqdiihcyqpjbttovf.supabase.co';
+const key = (import.meta.env.VITE_SUPABASE_KEY as string | undefined) || 'sb_publishable_ttavvygPFewC3BKrxTi7-A_dym6bGe9';
 
 export const supabase = createClient(url, key, {
   auth: { persistSession: false, autoRefreshToken: false },
