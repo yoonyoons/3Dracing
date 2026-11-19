@@ -60,7 +60,7 @@
 
 1. https://vercel.com 에 **GitHub 계정으로** 로그인합니다.
 2. **Add New… → Project** → `yoonyoons/3Dracing` 저장소 옆 **Import**.
-3. 설정은 `vercel.json` 에서 자동으로 읽습니다. 아무것도 바꾸지 말고 **Deploy**.
+3. 설정은 `vercel.json` 에서 자동으로 읽습니다. **Root Directory 는 비워 두거나(`./`) `client` 로 두세요.** (`shared` 나 `supabase` 를 고르면 안 됩니다.) 나머지는 바꾸지 말고 **Deploy**.
 4. 1~2분 뒤 `https://<프로젝트이름>.vercel.app` 주소가 생깁니다. 끝!
 
 - Vercel 에 넣어야 하는 **비밀 값은 없습니다.** Supabase 주소와 공개용 키는 `client/.env` 에 들어 있습니다(브라우저에 공개돼도 되는 값).
