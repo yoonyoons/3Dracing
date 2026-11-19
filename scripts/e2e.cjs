@@ -42,19 +42,35 @@ if(!TEACHER){console.error('E2E_TEACHER_CODE 환경변수가 필요합니다');p
   await host.waitForTimeout(1500);
   await host.screenshot({path:out+'/v-host-lobby.png'});
   await players[0].screenshot({path:out+'/v-play-lobby.png'});
-  await host.click('.btn.chip:has-text("1")');
+  await host.click('.btn.chip:has-text("2")');
   await host.click('text=레이스 시작!');
   await players[0].waitForSelector('.race-wrap',{timeout:10000});
   console.log(T(),'players in race view');
   await host.waitForTimeout(4800);
   for(const p of players) await p.keyboard.down('ArrowUp');
+  await host.waitForTimeout(3000);
+  // 레이스 중 한 학생의 인터넷이 5초 끊겼다가 돌아옴
+  await players[1].context().setOffline(true);
   await host.waitForTimeout(5000);
+  await players[1].context().setOffline(false);
+  await players[1].waitForSelector('.race-wrap',{timeout:15000});
+  console.log(T(),'offline 5s → still in race view');
+  // 레이스 중 다른 학생이 새로고침
+  await players[2].reload();
+  await players[2].waitForSelector('.race-wrap',{timeout:20000});
+  await players[2].keyboard.down('ArrowUp');
+  const before=await players[2].evaluate(()=>document.querySelector('.hud')?.textContent||'');
+  await host.waitForTimeout(3000);
+  const after=await players[2].evaluate(()=>document.querySelector('.hud')?.textContent||'');
+  console.log(T(),'reload mid-race → back in race view; HUD', before.slice(0,24),'→',after.slice(0,24));
   await players[0].keyboard.down('ArrowLeft'); await host.waitForTimeout(120); await players[0].keyboard.up('ArrowLeft');
   await host.screenshot({path:out+'/v-host-race.png'});
   await players[0].screenshot({path:out+'/v-play-race.png'});
   const lb=await host.textContent('.leaderboard'); console.log(T(),'leaderboard',lb);
   await host.waitForSelector('.card.result',{timeout:120000});
-  console.log(T(),'results:',await host.textContent('.rank-list'));
+  const res=await host.textContent('.rank-list');
+  console.log(T(),'results:',res);
+  if((res.match(/완주 못 함/g)||[]).length) throw new Error('완주 못 한 학생이 있음: '+res);
   await players[2].waitForSelector('.status-card',{timeout:10000});
   console.log(T(),'player after race:',await players[2].textContent('.status-card'));
   // 교사 화면 새로고침 → 방 이어짐
