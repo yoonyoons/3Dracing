@@ -211,3 +211,5 @@ input.field.narrow { width: min(320px, 100%); }
 .watch-view { width: 100% !important; height: 170px !important; background: linear-gradient(#fff6d6, #eaf7ff); border-radius: 16px; }
 .watch-names { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 .watch-chip { display: inline-flex; align-items: center; gap: 6px; border: 3px solid; border-radius: 999px; padding: 4px 10px; font-weight: 800; background: #fff; }
+.loading3d { display: grid; place-items: center; font-size: 40px; font-weight: 800; color: #55607a; }
+.race-canvas.loading3d { position: absolute; inset: 0; background: #aee4ff; font-size: 28px; }

@@ -24,7 +24,7 @@ function toBlob(c: HTMLCanvasElement, type = 'image/png'): Promise<Blob> {
 }
 
 /**
- * 학생이 올린 사진을 이 기기에서 정리합니다. 원본 사진은 서버로 보내지 않습니다.
+ * 학생이 올린 사진을 이 기기에서 정리합니다. 원본 사진은 어디에도 보내지 않습니다.
  * 다시 그려서 저장하므로 촬영 위치 같은 사진 정보도 남지 않습니다.
  */
 export async function prepareDrawing(file: Blob): Promise<PreparedDrawing> {

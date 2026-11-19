@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { LIMITS, TRACK_LIST, getTrack, type RaceResult, type RoomView } from '@racing/shared';
+import { TRACK_LIST, getTrack, type RaceResult, type RoomView } from '@racing/shared';
 import { HostController } from '../net/host';
 import { realtimeConnected } from '../net/supabase';
 import { useHostRace } from '../game/useRaceStream';
-import { RaceScene } from '../game/RaceScene';
+import { RaceScene } from '../game/lazy';
 import { Countdown, formatTime } from '../game/Hud';
 import type { CameraMode, CarLook } from '../game/types';
 import { navigate } from '../router';
-import { PodiumScene, Showroom } from '../game/Showroom';
+import { PodiumScene, Showroom } from '../game/lazy';
 import { MuteButton, sfx, unlockSound } from '../game/sound';
 
 export function looksOf(room: RoomView, ids?: string[]): CarLook[] {

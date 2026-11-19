@@ -14,7 +14,7 @@ export const PHYS = {
   radius: 1.5,
   boostTime: 1.6,
   boostPadRadius: 3.4,
-  /** 서버 물리 주기 */
+  /** 교사 화면의 물리 계산 주기(초당) */
   tickRate: 30,
 };
 

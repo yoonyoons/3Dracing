@@ -23,7 +23,7 @@ function load(url: string): Promise<THREE.Group> {
   return p;
 }
 
-/** 서버에서 크기·방향을 맞춰 둔 GLB 를 그대로 올려놓습니다. 불러오는 동안/실패 시에는 fallback 을 보여 줍니다. */
+/** 미리 크기·방향을 맞춰 둔 GLB(관리자 화면에서 정리됨)를 그대로 올려놓습니다. 불러오는 동안/실패 시에는 fallback 을 보여 줍니다. */
 export function GlbCar({ url, flip, fallback }: { url: string; flip?: boolean; fallback: React.ReactNode }) {
   const [obj, setObj] = useState<THREE.Group | null>(null);
   useEffect(() => {

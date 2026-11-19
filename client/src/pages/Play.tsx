@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { LIMITS, checkNickname, getTrack, randomNickname, NICK_MAX, type RoomView } from '@racing/shared';
 import { PlayerController } from '../net/player';
 import { usePlayerRace } from '../game/useRaceStream';
-import { RaceScene } from '../game/RaceScene';
+import { RaceScene } from '../game/lazy';
 import { useControls } from '../game/useControls';
 import { TouchControls } from '../game/TouchControls';
 import { Countdown, Hud } from '../game/Hud';
 import { looksOf, ResultList, useOnline } from './Host';
 import { navigate } from '../router';
-import { Showroom } from '../game/Showroom';
+import { Showroom } from '../game/lazy';
 import { flipCar, removeDrawing, uploadDrawing } from '../net/cars';
 
 export function Play() {

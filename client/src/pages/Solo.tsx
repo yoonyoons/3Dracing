@@ -3,7 +3,7 @@ import {
   TRACK_LIST, getTrack, createCar, stepWorld, rankCars, currentLap, botInput, PHYS, NO_INPUT,
   type CarState, type BotProfile,
 } from '@racing/shared';
-import { RaceScene } from '../game/RaceScene';
+import { RaceScene } from '../game/lazy';
 import { useControls } from '../game/useControls';
 import { TouchControls } from '../game/TouchControls';
 import { Countdown, Hud, formatTime, type HudInfo } from '../game/Hud';
