@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import { LIMITS, TRACK_LIST, getTrack, type RaceResult, type RoomView } from '@racing/shared';
-import { getSocket, loadSession, saveSession } from '../net/socket';
-import { useRoom } from '../net/useRoom';
-import { useRaceStream } from '../game/useRaceStream';
+import { HostController } from '../net/host';
+import { realtimeConnected } from '../net/supabase';
+import { useHostRace } from '../game/useRaceStream';
 import { RaceScene } from '../game/RaceScene';
 import { Countdown, formatTime } from '../game/Hud';
 import type { CameraMode, CarLook } from '../game/types';
 import { navigate } from '../router';
 import { PodiumScene, Showroom } from '../game/Showroom';
-
-const KEY = 'racing.host';
 
 export function looksOf(room: RoomView, ids?: string[]): CarLook[] {
   return room.players
@@ -38,21 +36,8 @@ export function ResultList({ results, meId, limit }: { results: RaceResult[]; me
 }
 
 function useJoinUrl(code: string | undefined): { url: string; qr: string } {
-  const [base, setBase] = useState(window.location.origin);
   const [qr, setQr] = useState('');
-  useEffect(() => {
-    // 교사 PC에서 localhost 로 열었다면, 학생은 같은 와이파이의 IP 주소로 들어와야 합니다.
-    fetch('/api/info')
-      .then((r) => r.json())
-      .then((info: { publicUrl: string | null; lan: string[] }) => {
-        if (info.publicUrl) setBase(info.publicUrl);
-        else if (['localhost', '127.0.0.1'].includes(window.location.hostname) && info.lan[0]) {
-          setBase(info.lan[0].replace(/:\d+$/, window.location.port ? `:${window.location.port}` : ''));
-        }
-      })
-      .catch(() => {});
-  }, []);
-  const url = code ? `${base}/play?code=${code}` : '';
+  const url = code ? `${window.location.origin}/play?code=${code}` : '';
   useEffect(() => {
     if (!url) return;
     QRCode.toDataURL(url, { margin: 1, width: 360, color: { dark: '#22223b', light: '#ffffff' } }).then(setQr).catch(() => setQr(''));
@@ -60,57 +45,91 @@ function useJoinUrl(code: string | undefined): { url: string; qr: string } {
   return { url, qr };
 }
 
-export function Host() {
-  const { room, connected, setRoom } = useRoom();
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [needCode, setNeedCode] = useState(false);
-  const [teacherCode, setTeacherCode] = useState('');
-  const socket = getSocket();
-
+/** 인터넷(실시간 연결) 상태 */
+export function useOnline(): boolean {
+  const [on, setOn] = useState(true);
   useEffect(() => {
-    fetch('/api/info').then((r) => r.json()).then((i) => setNeedCode(!!i.needsTeacherCode)).catch(() => {});
+    let off = 0;
+    const t = window.setInterval(() => {
+      // 잠깐 끊겼다 바로 붙는 경우는 무시하고, 4초 넘게 끊기면 알려 줍니다.
+      off = realtimeConnected() ? 0 : off + 1;
+      setOn(off < 2);
+    }, 2000);
+    return () => window.clearInterval(t);
   }, []);
+  return on;
+}
+
+export function Host() {
+  const [host, setHost] = useState<HostController | null>(null);
+  const [room, setRoom] = useState<RoomView | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(HostController.hasSaved());
+  const [teacherCode, setTeacherCode] = useState('');
+  const online = useOnline();
 
   useEffect(() => {
     document.title = '선생님 화면 · 드로잉 레이싱';
-    const resume = () => {
-      const saved = loadSession<{ code: string; hostToken: string }>(KEY);
-      if (!saved) return;
-      socket.emit('host:resume', saved, (res) => {
-        if (!res.ok) saveSession(KEY, null);
-      });
-    };
-    resume();
-    socket.on('connect', resume);
-    const closed = () => { saveSession(KEY, null); setRoom(null); };
-    socket.on('closed', closed);
-    return () => { socket.off('connect', resume); socket.off('closed', closed); };
-  }, [socket, setRoom]);
+    let alive = true;
+    let made: HostController | null = null;
+    if (HostController.hasSaved()) {
+      HostController.resume()
+        .then((h) => {
+          if (!h) return;
+          if (!alive) return h.dispose();
+          made = h;
+          setHost(h);
+        })
+        .catch((e) => alive && setError(`이전 방을 열지 못했어요: ${(e as Error).message}`))
+        .finally(() => alive && setBusy(false));
+    }
+    return () => { alive = false; made?.dispose(); };
+  }, []);
 
-  const create = () => {
+  useEffect(() => {
+    if (!host) return;
+    setRoom(host.view);
+    return host.subscribe(setRoom);
+  }, [host]);
+
+  // 교사 화면을 닫으려 하면 한 번 확인합니다(레이스가 이 화면에서 돌아가기 때문).
+  useEffect(() => {
+    if (!host) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [host]);
+
+  const create = async () => {
     setBusy(true);
     setError('');
-    socket.timeout(5000).emit('host:create', { teacherCode }, (err, res) => {
-      setBusy(false);
-      if (err) return setError('서버에 연결할 수 없어요. 잠시 후 다시 눌러 주세요.');
-      if (!res.ok) return setError(res.error);
-      saveSession(KEY, { code: res.code, hostToken: res.hostToken });
-    });
+    try {
+      setHost(await HostController.create(teacherCode));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setBusy(false);
   };
 
-  if (!room) {
+  const closeRoom = async () => {
+    if (!host) return;
+    await host.close();
+    setHost(null);
+    setRoom(null);
+  };
+
+  if (!host || !room) {
     return (
       <div className="page center">
         <div className="hero-emoji">👩‍🏫</div>
         <h1>선생님 화면</h1>
-        <p className="sub">방을 만들고 이 화면을 프로젝터에 띄워 주세요.</p>
-        {needCode && (
-          <input className="field narrow" type="password" autoComplete="off" placeholder="교사 코드"
-            value={teacherCode} onChange={(e) => setTeacherCode(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') create(); }} />
-        )}
-        <button className="btn primary big-inline" onClick={create} disabled={busy}>방 만들기</button>
+        <p className="sub">방을 만들고 이 화면을 프로젝터에 띄워 주세요.<br />레이스는 이 화면에서 계산되니, 수업이 끝날 때까지 닫지 마세요.</p>
+        <input className="field narrow" type="password" autoComplete="off" placeholder="교사 코드"
+          value={teacherCode} onChange={(e) => setTeacherCode(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void create(); }} disabled={busy} />
+        <button className="btn primary big-inline" onClick={create} disabled={busy || !teacherCode}>
+          {busy ? '여는 중…' : '방 만들기'}
+        </button>
         <div className="error">{error}</div>
         <button className="btn white small" onClick={() => navigate('/')}>← 처음으로</button>
       </div>
@@ -119,16 +138,15 @@ export function Host() {
 
   return (
     <>
-      {!connected && <div className="banner">연결이 끊겼어요. 다시 연결하는 중…</div>}
-      {(room.phase === 'lobby') && <HostLobby room={room} />}
-      {(room.phase === 'countdown' || room.phase === 'racing' || room.phase === 'results') && <HostRace room={room} />}
-      {room.phase === 'podium' && <HostPodium room={room} />}
+      {!online && <div className="banner">인터넷 연결이 끊겼어요. 다시 연결하는 중…</div>}
+      {room.phase === 'lobby' && <HostLobby host={host} room={room} onClose={closeRoom} />}
+      {(room.phase === 'countdown' || room.phase === 'racing' || room.phase === 'results') && <HostRace host={host} room={room} />}
+      {room.phase === 'podium' && <HostPodium host={host} room={room} />}
     </>
   );
 }
 
-function HostLobby({ room }: { room: RoomView }) {
-  const socket = getSocket();
+function HostLobby({ host, room, onClose }: { host: HostController; room: RoomView; onClose: () => void }) {
   const { url, qr } = useJoinUrl(room.code);
   const online = room.players.filter((p) => p.connected).length;
   const next = room.plan?.[room.planIndex];
@@ -137,20 +155,10 @@ function HostLobby({ room }: { room: RoomView }) {
   const needHeats = online > room.settings.heatSize;
 
   // 부적절한 그림은 대기실에서 바로 가릴 수 있습니다(학생 화면과 레이스에서 기본 차로 보임).
-  const hide = (playerId: string, hidden: boolean) => {
-    const saved = loadSession<{ hostToken: string }>(KEY);
-    void fetch(`/api/rooms/${room.code}/hide/${playerId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-host-token': saved?.hostToken ?? '' },
-      body: JSON.stringify({ hidden }),
-    });
-  };
+  const hide = (playerId: string, hidden: boolean) => void host.hide(playerId, hidden).catch(() => {});
 
   const close = () => {
-    if (window.confirm('방을 닫을까요?\n학생들이 모두 나가고, 이 방의 그림과 3D 모델이 삭제됩니다.')) {
-      socket.emit('host:close');
-      saveSession(KEY, null);
-    }
+    if (window.confirm('방을 닫을까요?\n학생들이 모두 나가고, 이 방의 그림과 3D 모델이 삭제됩니다.')) onClose();
   };
 
   return (
@@ -188,7 +196,7 @@ function HostLobby({ room }: { room: RoomView }) {
                   {p.car.hidden ? '👁' : '🙈'}
                 </button>
               )}
-              <button className="kick" title="내보내기" onClick={() => socket.emit('host:kick', p.id)}>✕</button>
+              <button className="kick" title="내보내기" onClick={() => void host.kick(p.id)}>✕</button>
             </div>
           ))}
         </div>
@@ -209,7 +217,7 @@ function HostLobby({ room }: { room: RoomView }) {
             <span className="label">코스</span>
             {TRACK_LIST.map((t) => (
               <button key={t.id} className={`btn chip ${room.settings.trackId === t.id ? 'on' : ''}`}
-                onClick={() => socket.emit('host:settings', { trackId: t.id })}>
+                onClick={() => host.settings({ trackId: t.id })}>
                 {t.name} {'⭐'.repeat(t.difficulty)}
               </button>
             ))}
@@ -218,42 +226,41 @@ function HostLobby({ room }: { room: RoomView }) {
             <span className="label">바퀴 수</span>
             {[1, 2, 3, 5].map((n) => (
               <button key={n} className={`btn chip ${room.settings.laps === n ? 'on' : ''}`}
-                onClick={() => socket.emit('host:settings', { laps: n })}>{n}</button>
+                onClick={() => host.settings({ laps: n })}>{n}</button>
             ))}
             <span className="label gap">한 번에 달리는 인원</span>
-            {[4, 6, 8, 10].map((n) => (
+            {[4, 6, 8].map((n) => (
               <button key={n} className={`btn chip ${room.settings.heatSize === n ? 'on' : ''}`} disabled={started}
-                onClick={() => socket.emit('host:settings', { heatSize: n })}>{n}명</button>
+                onClick={() => host.settings({ heatSize: n })}>{n}명</button>
             ))}
           </div>
         </div>
 
         <div className="row">
           {!room.plan && needHeats && (
-            <button className="btn yellow big-inline" onClick={() => socket.emit('host:plan')}>
+            <button className="btn yellow big-inline" onClick={() => host.plan()}>
               🎲 조 편성하기 ({Math.ceil(online / room.settings.heatSize)}개 조)
             </button>
           )}
           {room.plan && !started && (
-            <button className="btn white" onClick={() => socket.emit('host:plan')}>🎲 다시 섞기</button>
+            <button className="btn white" onClick={() => host.plan()}>🎲 다시 섞기</button>
           )}
           {(room.plan || !needHeats) && (
             <button className="btn primary big-inline" disabled={online === 0 || (!!next && next.ids.length === 0)}
-              onClick={() => socket.emit('host:start')}>
+              onClick={() => host.start()}>
               🏁 {next ? `${next.label} 출발!` : '레이스 시작!'}
             </button>
           )}
-          {started && <button className="btn white" onClick={() => socket.emit('host:reset')}>처음부터 다시</button>}
+          {started && <button className="btn white" onClick={() => host.reset()}>처음부터 다시</button>}
         </div>
       </main>
     </div>
   );
 }
 
-function HostRace({ room }: { room: RoomView }) {
-  const socket = getSocket();
+function HostRace({ host, room }: { host: HostController; room: RoomView }) {
   const race = room.race;
-  const { stream, live } = useRaceStream(race, null);
+  const { stream, live } = useHostRace(host, race);
   const [cam, setCam] = useState<CameraMode['mode']>('follow');
   const looks = useMemo(() => looksOf(room, race?.racers), [room, race]);
   const track = useMemo(() => getTrack(race?.trackId ?? room.settings.trackId), [race, room.settings.trackId]);
@@ -281,7 +288,7 @@ function HostRace({ room }: { room: RoomView }) {
           📷 {cam === 'follow' ? '전체 보기' : '1등 따라가기'}
         </button>
         {room.phase !== 'results' && (
-          <button className="btn small danger" onClick={() => socket.emit('host:stop')}>레이스 끝내기</button>
+          <button className="btn small danger" onClick={() => host.stop()}>레이스 끝내기</button>
         )}
       </div>
       <ol className="leaderboard">
@@ -302,7 +309,7 @@ function HostRace({ room }: { room: RoomView }) {
           <div className="card result wide">
             <h2>🏁 {plan?.label} 결과</h2>
             <ResultList results={room.lastResults} />
-            <button className="btn primary big-inline" onClick={() => socket.emit('host:next')}>
+            <button className="btn primary big-inline" onClick={() => host.next()}>
               {hasMore ? '다음으로 ▶' : '🏆 시상대 보기'}
             </button>
           </div>
@@ -312,8 +319,7 @@ function HostRace({ room }: { room: RoomView }) {
   );
 }
 
-function HostPodium({ room }: { room: RoomView }) {
-  const socket = getSocket();
+function HostPodium({ host, room }: { host: HostController; room: RoomView }) {
   const results = room.finalResults ?? [];
   const medal = ['🥇', '🥈', '🥉'];
   const all = looksOf(room);
@@ -338,7 +344,7 @@ function HostPodium({ room }: { room: RoomView }) {
         <div className="card result"><ResultList results={results.slice(3)} /></div>
       )}
       <div className="row">
-        <button className="btn primary big-inline" onClick={() => socket.emit('host:reset')}>새 레이스 준비</button>
+        <button className="btn primary big-inline" onClick={() => host.reset()}>새 레이스 준비</button>
       </div>
     </div>
   );

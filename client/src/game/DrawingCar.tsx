@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import * as THREE from 'three';
+import { resolveAsset } from '../net/assets';
 
 const COLS = 48;
 const MAX_HEIGHT = 2.8;
@@ -29,7 +30,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
  * 그림의 오른쪽이 차의 앞(+Z)입니다.
  */
 async function buildBody(url: string): Promise<Body> {
-  const img = await loadImage(url);
+  const img = await loadImage(await resolveAsset(url));
   const W = 96;
   const H = Math.max(8, Math.round((img.height / img.width) * W));
   const canvas = document.createElement('canvas');
@@ -157,11 +158,12 @@ export function useDrawingBody(url: string | null | undefined): Body | null | 'e
   return body;
 }
 
-export function DrawingCar({ url, fallback }: { url: string; fallback: React.ReactNode }) {
+export function DrawingCar({ url, flip, fallback }: { url: string; flip?: boolean; fallback: React.ReactNode }) {
   const body = useDrawingBody(url);
   if (!body || body === 'error') return <>{fallback}</>;
   return (
-    <group position={[0, 0.05, 0]}>
+    // 앞뒤 바꾸기: 앞뒤(Z) 방향으로 거울처럼 뒤집습니다.
+    <group position={[0, 0.05, 0]} scale={[1, 1, flip ? -1 : 1]}>
       <mesh geometry={body.sides}>
         <meshLambertMaterial map={body.texture} alphaTest={0.5} side={THREE.DoubleSide} />
       </mesh>

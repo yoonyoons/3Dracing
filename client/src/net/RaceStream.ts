@@ -1,67 +1,69 @@
 import {
-  CarInput, CarState, NO_INPUT, PHYS, RaceInfo, Snap, Track,
-  angleDiff, getTrack, locate, stepCar,
+  type CarInput, type CarState, NO_INPUT, PHYS, type RaceInfo, type Snap, type Track,
+  angleDiff, getTrack, locate, snapRateFor, stepCar,
 } from '@racing/shared';
 import type { RenderCar } from '../game/types';
-import type { AppSocket } from './socket';
 
-const INTERP_MS = 150;
 const STEP = 1 / 60;
+/** 입력을 묶어 보내느라 생기는 평균 지연(ms) */
+const BATCH_LEAD = 150;
 
 interface Hist { st: number; x: number; z: number; h: number; v: number }
 
+/** 레이스 화면이 쓰는 공통 모양 (학생: 네트워크 스냅샷 / 교사: 직접 계산) */
+export interface RaceView {
+  readonly race: RaceInfo;
+  getCars(): RenderCar[];
+  getLeaderId(): string | undefined;
+  order(): string[];
+  countdown(): number;
+  raceSeconds(): number;
+  latest(id: string): { prog: number; v: number; boost: number; finished: boolean } | null;
+  lapOf(id: string): number;
+  speedRatio(id: string): number;
+  readonly finished: boolean;
+  frame(dt: number): void;
+}
+
 /**
- * 서버 스냅샷을 받아 화면에 그릴 위치를 만듭니다.
- * - 다른 차: 150ms 전 시점을 두 스냅샷 사이에서 보간 → 끊김 없이 부드럽게
- * - 내 차: 같은 물리 코드로 미리 움직이고(예측), 서버 값과 차이는 조금씩 맞춥니다 → 조작이 바로 반응
+ * 교사 화면이 보내는 스냅샷을 받아 화면에 그릴 위치를 만듭니다. (학생 기기)
+ * - 다른 차: 조금 전 시점을 두 스냅샷 사이에서 보간 → 끊김 없이 부드럽게
+ * - 내 차: 같은 물리 코드로 미리 움직이고(예측), 교사 화면 값과 차이는 조금씩 맞춥니다 → 조작이 바로 반응
  */
-export class RaceStream {
+export class RaceStream implements RaceView {
   readonly track: Track;
   private snaps: Snap[] = [];
   private offset = NaN;
-  private rtt = 80;
+  private rtt = 150;
   private me: CarState | null = null;
   private simTime = 0;
   private acc = 0;
   private hist: Hist[] = [];
   private out: RenderCar[];
   private myIndex: number;
-  private rttTimer: number | null = null;
+  private interpMs: number;
   finished = false;
 
   constructor(readonly race: RaceInfo, readonly myId: string | null, private readInput?: () => CarInput) {
     this.track = getTrack(race.trackId);
     this.myIndex = myId ? race.racers.indexOf(myId) : -1;
     this.out = race.racers.map((id) => ({ id, x: 0, z: 0, h: 0, v: 0, boost: 0 }));
+    // 스냅샷 간격의 1.6배만큼 늦게 그려야 보간할 두 장이 늘 있습니다.
+    this.interpMs = Math.round((1000 / snapRateFor(race.racers.length)) * 1.6);
   }
 
-  attach(socket: AppSocket): () => void {
-    const onSnap = (s: Snap) => this.onSnap(s);
-    socket.on('snap', onSnap);
-    const measure = () => {
-      const t = performance.now();
-      socket.timeout(2000).emit('rtt', (err: unknown) => {
-        if (!err) this.rtt += (Math.min(600, performance.now() - t) - this.rtt) * 0.3;
-      });
-    };
-    measure();
-    this.rttTimer = window.setInterval(measure, 2000);
-    return () => {
-      socket.off('snap', onSnap);
-      if (this.rttTimer) window.clearInterval(this.rttTimer);
-    };
+  setRtt(ms: number): void {
+    this.rtt = Math.max(30, Math.min(800, ms));
   }
 
   get ready(): boolean {
     return this.snaps.length > 0;
   }
 
-  /** 서버 레이스 시계 추정값(ms) */
   serverNow(): number {
     return Number.isNaN(this.offset) ? 0 : performance.now() - this.offset;
   }
 
-  /** 출발까지 남은 초(올림). 출발 후엔 0 이하 */
   countdown(): number {
     if (!this.ready) return 99;
     return Math.ceil((this.race.startAt - this.serverNow()) / 1000);
@@ -78,12 +80,13 @@ export class RaceStream {
     };
   }
 
-  private onSnap(s: Snap): void {
-    if (s.c.length !== this.race.racers.length) return;
+  onSnap(s: Snap): void {
+    if (s.r !== this.race.id || s.c.length !== this.race.racers.length) return;
     const last = this.snaps[this.snaps.length - 1];
     if (last && s.t <= last.t) return;
+    // 전달 시간은 들쭉날쭉하므로 "가장 빨리 온 것" 기준으로 시계를 맞춥니다.
     const sample = performance.now() - s.t;
-    this.offset = Number.isNaN(this.offset) ? sample : Math.min(this.offset + 0.2, sample);
+    this.offset = Number.isNaN(this.offset) ? sample : Math.min(this.offset + 0.3, sample);
     this.snaps.push(s);
     if (this.snaps.length > 30) this.snaps.shift();
 
@@ -91,32 +94,31 @@ export class RaceStream {
     const c = s.c[this.myIndex];
     this.finished = !!c[6];
     const tau = (s.t - this.race.startAt) / 1000;
-    if (!this.me || tau <= 0 || this.finished || this.hist.length === 0) {
-      if (!this.me || tau <= 0 || this.finished) {
-        this.me = this.fromSnap(c);
-        this.hist = [];
-        if (tau <= 0) this.simTime = 0;
-      }
+    if (!this.me || tau <= 0 || this.finished) {
+      this.me = this.fromSnap(c);
+      this.hist = [];
+      if (tau <= 0) this.simTime = 0;
       return;
     }
-    // 서버가 계산한 시점(tau)에 내가 예측했던 위치와 비교합니다.
+    if (this.hist.length === 0) return;
     let h = this.hist[0];
     for (const k of this.hist) if (Math.abs(k.st - tau) < Math.abs(h.st - tau)) h = k;
     const ex = c[0] - h.x;
     const ez = c[1] - h.z;
     const eh = angleDiff(c[2], h.h);
     const ev = c[3] - h.v;
-    if (Math.hypot(ex, ez) > 10 || Math.abs(h.st - tau) > 0.5) {
+    if (Math.hypot(ex, ez) > 12 || Math.abs(h.st - tau) > 0.6) {
       this.me = this.fromSnap(c);
       this.hist = [];
-      this.simTime = tau + this.rtt / 1000;
+      this.simTime = tau + this.lead() / 1000;
       return;
     }
-    const k = 0.18;
+    const k = 0.25;
     this.me.x += ex * k;
     this.me.z += ez * k;
     this.me.h += eh * k;
     this.me.v += ev * k;
+    this.me.prog = Math.max(this.me.prog, c[5] - 2);
     this.me.boost = Math.max(this.me.boost, c[4] - 0.3);
     for (const q of this.hist) {
       q.x += ex * k;
@@ -126,11 +128,14 @@ export class RaceStream {
     }
   }
 
-  /** 매 프레임 호출: 내 차 예측을 진행합니다. */
+  /** 내 입력이 교사 화면에 닿기까지 걸리는 시간 */
+  private lead(): number {
+    return this.rtt / 2 + BATCH_LEAD;
+  }
+
   frame(dt: number): void {
     if (!this.me || this.finished || this.myIndex < 0) return;
-    // 내 입력이 서버에 닿는 시간만큼 먼저 출발해야 서버와 같은 시점을 달립니다.
-    if (this.serverNow() < this.race.startAt - this.rtt) return;
+    if (this.serverNow() < this.race.startAt - this.lead()) return;
     const input = this.readInput ? this.readInput() : NO_INPUT;
     this.acc += Math.min(dt, 0.1);
     while (this.acc >= STEP) {
@@ -139,13 +144,13 @@ export class RaceStream {
       stepCar(this.track, this.me, input, STEP);
     }
     this.hist.push({ st: this.simTime, x: this.me.x, z: this.me.z, h: this.me.h, v: this.me.v });
-    while (this.hist.length > 90) this.hist.shift();
+    while (this.hist.length > 120) this.hist.shift();
   }
 
   getCars = (): RenderCar[] => {
     const n = this.snaps.length;
     if (n === 0) return [];
-    const ts = this.serverNow() - INTERP_MS;
+    const ts = this.serverNow() - this.interpMs;
     let b = n - 1;
     while (b > 0 && this.snaps[b - 1].t >= ts) b--;
     const B = this.snaps[b];
@@ -166,8 +171,7 @@ export class RaceStream {
         o.z = a[1] + (c[1] - a[1]) * g;
         o.h = a[2] + angleDiff(c[2], a[2]) * g;
       } else {
-        // 새 스냅샷이 늦으면 잠깐은 가던 방향으로 계속 그립니다.
-        const extra = Math.min(0.25, (ts - B.t) / 1000);
+        const extra = Math.min(0.3, (ts - B.t) / 1000);
         o.x = c[0] + Math.sin(c[2]) * c[3] * extra;
         o.z = c[1] + Math.cos(c[2]) * c[3] * extra;
         o.h = c[2];
@@ -178,7 +182,6 @@ export class RaceStream {
     return this.out;
   };
 
-  /** 순위 순서의 참가자 id */
   order(): string[] {
     const s = this.snaps[this.snaps.length - 1];
     return s ? s.o.map((i) => this.race.racers[i]) : this.race.racers;
@@ -186,8 +189,7 @@ export class RaceStream {
 
   getLeaderId = (): string | undefined => this.order()[0];
 
-  /** 최신 스냅샷의 차 상태 (HUD 용) */
-  latest(id: string): { prog: number; v: number; boost: number; finished: boolean } | null {
+  latest(id: string) {
     const s = this.snaps[this.snaps.length - 1];
     const i = this.race.racers.indexOf(id);
     if (!s || i < 0) return null;

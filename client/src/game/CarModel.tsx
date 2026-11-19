@@ -69,7 +69,7 @@ export function KartModel({ color }: { color: string }) {
  */
 export function CarModel({ look }: { look: CarLook }) {
   const kart = <KartModel color={look.color} />;
-  const drawing = look.imageUrl ? <DrawingCar url={look.imageUrl} fallback={kart} /> : kart;
+  const drawing = look.imageUrl ? <DrawingCar url={look.imageUrl} flip={look.flip} fallback={kart} /> : kart;
   if (look.glbUrl) return <GlbCar url={look.glbUrl} flip={look.flip} fallback={drawing} />;
   return drawing;
 }

@@ -1,21 +1,44 @@
-import crypto from 'node:crypto';
+// 교사 화면(호스트)에서 돌아가는 방 관리. 서버 없이 브라우저 안에서 동작합니다.
 import {
-  CarView, LIMITS, PlayerView, RaceResult, RoomPhase, RoomSettings, RoomView, Snap,
-  TRACK_LIST, PHYS, checkNickname, normalizeNick,
-} from '@racing/shared';
-import { RaceSim } from './race';
+  LIMITS, snapRateFor,
+  type CarView, type PlayerView, type RaceResult, type RoomPhase, type RoomSettings, type RoomView, type Snap,
+} from './protocol';
+import { PHYS } from './physics';
+import { TRACK_LIST } from './track';
+import { checkNickname, normalizeNick } from './nickname';
+import { RaceSim, type InputEvent } from './race';
 
 const COLORS = ['#ff5a5f', '#ffb400', '#2ec4b6', '#3a86ff', '#8338ec', '#ff7ac6', '#70c13a', '#ff8c42', '#00b4d8', '#b08968'];
-const ROOM_IDLE_MS = 3 * 60 * 60 * 1000;
-const MAX_ROOMS = 30;
+
+export function randomHex(bytes: number): string {
+  const a = new Uint8Array(bytes);
+  globalThis.crypto.getRandomValues(a);
+  return [...a].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function randomInt(n: number): number {
+  const a = new Uint32Array(1);
+  globalThis.crypto.getRandomValues(a);
+  return a[0] % n;
+}
+
+function shuffle<T>(a: T[]): T[] {
+  const r = [...a];
+  for (let i = r.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [r[i], r[j]] = [r[j], r[i]];
+  }
+  return r;
+}
 
 export interface Player {
   id: string;
-  token: string;
+  /** 학생 전용 채널 이름에 들어가는 비밀 값. 방 상태에는 절대 넣지 않습니다. */
+  chan: string;
   name: string;
   color: string;
   connected: boolean;
-  socketId: string | null;
+  lastSeen: number;
   car: CarView;
   joinedAt: number;
 }
@@ -28,56 +51,51 @@ interface Plan {
 }
 
 export interface RoomEvents {
-  room(code: string, view: RoomView): void;
-  snap(code: string, snap: Snap): void;
-  closed(code: string): void;
+  /** 방 상태가 바뀜 → 모두에게 알림 */
+  room(view: RoomView): void;
+  /** 레이스 스냅샷 → 달리는 학생에게 */
+  snap(snap: Snap): void;
 }
 
 export const emptyCar = (): CarView => ({ status: 'none', imageUrl: null, glbUrl: null, progress: 0, hidden: false, flip: false });
 
-function shuffle<T>(a: T[]): T[] {
-  const r = [...a];
-  for (let i = r.length - 1; i > 0; i--) {
-    const j = crypto.randomInt(i + 1);
-    [r[i], r[j]] = [r[j], r[i]];
-  }
-  return r;
+/** 새로고침해도 이어지도록 저장하는 방 정보 */
+export interface RoomSave {
+  code: string;
+  settings: RoomSettings;
+  players: Omit<Player, 'connected' | 'lastSeen' | 'car'>[];
+  plan: Plan[] | null;
+  planIndex: number;
+  lastResults: RaceResult[] | null;
+  finalResults: RaceResult[] | null;
+  phase: RoomPhase;
 }
 
 export class Room {
-  readonly hostToken = crypto.randomBytes(16).toString('hex');
-  readonly createdAt = Date.now();
-  lastActive = Date.now();
   phase: RoomPhase = 'lobby';
   settings: RoomSettings = { trackId: 'oval', laps: 3, heatSize: 8 };
   players = new Map<string, Player>();
   plan: Plan[] | null = null;
   planIndex = 0;
   race: RaceSim | null = null;
+  raceId = '';
   lastResults: RaceResult[] | null = null;
   finalResults: RaceResult[] | null = null;
-  private timer: NodeJS.Timeout | null = null;
+  generator: RoomView['generator'] = 'pregenerated';
+  private timer: ReturnType<typeof setInterval> | null = null;
   private tick = 0;
 
   constructor(readonly code: string, private events: RoomEvents) {}
 
-  touch(): void {
-    this.lastActive = Date.now();
-  }
-
   // ───── 참가자 ─────
 
-  join(rawName: string, socketId: string, prev?: { playerId?: string; token?: string }): Player | string {
-    this.touch();
-    if (prev?.playerId && prev.token) {
-      const p = this.players.get(prev.playerId);
-      if (p && p.token === prev.token) {
-        p.connected = true;
-        p.socketId = socketId;
-        this.race?.setActive(p.id, true);
-        this.broadcast();
-        return p;
-      }
+  /** 새 학생 입장. 이미 있는 학생(같은 비밀 값)이면 다시 연결된 것으로 처리합니다. */
+  join(rawName: string, pid: string, chan: string): Player | string {
+    const known = this.players.get(pid);
+    if (known) {
+      if (known.chan !== chan) return '다시 입장해 주세요.';
+      this.seen(pid);
+      return known;
     }
     const err = checkNickname(rawName);
     if (err) return err;
@@ -93,23 +111,36 @@ export class Room {
     const used = new Map<string, number>();
     for (const p of this.players.values()) used.set(p.color, (used.get(p.color) ?? 0) + 1);
     const color = [...COLORS].sort((a, b) => (used.get(a) ?? 0) - (used.get(b) ?? 0))[0];
-    const p: Player = {
-      id: crypto.randomBytes(6).toString('hex'),
-      token: crypto.randomBytes(16).toString('hex'),
-      name, color, connected: true, socketId, car: emptyCar(), joinedAt: Date.now(),
-    };
+    const now = Date.now();
+    const p: Player = { id: pid, chan, name, color, connected: true, lastSeen: now, car: emptyCar(), joinedAt: now };
     this.players.set(p.id, p);
     this.broadcast();
     return p;
   }
 
-  disconnect(playerId: string, socketId: string): void {
-    const p = this.players.get(playerId);
-    if (!p || p.socketId !== socketId) return;
-    p.connected = false;
-    p.socketId = null;
-    this.race?.setActive(p.id, false);
-    this.broadcast();
+  /** 학생에게서 소식이 옴 (살아 있음) */
+  seen(pid: string): void {
+    const p = this.players.get(pid);
+    if (!p) return;
+    p.lastSeen = Date.now();
+    if (!p.connected) {
+      p.connected = true;
+      this.race?.setActive(p.id, true);
+      this.broadcast();
+    }
+  }
+
+  /** 한동안 소식이 없는 학생을 "끊김"으로 표시합니다. */
+  checkOffline(now = Date.now()): void {
+    let changed = false;
+    for (const p of this.players.values()) {
+      if (p.connected && now - p.lastSeen > LIMITS.offlineMs) {
+        p.connected = false;
+        this.race?.setActive(p.id, false);
+        changed = true;
+      }
+    }
+    if (changed) this.broadcast();
   }
 
   remove(playerId: string): Player | undefined {
@@ -124,15 +155,30 @@ export class Room {
     return p;
   }
 
-  input(playerId: string, i: unknown): void {
-    if (!this.race || !Array.isArray(i)) return;
-    this.race.setInput(playerId, Number(i[0]), Number(i[1]), Number(i[2]));
+  inputs(playerId: string, events: InputEvent[]): void {
+    this.race?.queueInputs(playerId, events);
   }
 
-  // ───── 교사(호스트) 조작 ─────
+  /** 차 모습이 바뀐 학생들을 반영합니다. */
+  setCars(cars: Map<string, CarView>, generator?: RoomView['generator']): void {
+    let changed = false;
+    if (generator && generator !== this.generator) {
+      this.generator = generator;
+      changed = true;
+    }
+    for (const p of this.players.values()) {
+      const next = cars.get(p.id) ?? emptyCar();
+      if (JSON.stringify(next) !== JSON.stringify(p.car)) {
+        p.car = next;
+        changed = true;
+      }
+    }
+    if (changed) this.broadcast();
+  }
+
+  // ───── 교사 조작 ─────
 
   setSettings(s: Partial<RoomSettings>): void {
-    this.touch();
     if (this.phase !== 'lobby') return;
     if (typeof s.trackId === 'string' && TRACK_LIST.some((t) => t.id === s.trackId)) this.settings.trackId = s.trackId;
     if (Number.isFinite(s.laps)) this.settings.laps = Math.max(1, Math.min(LIMITS.maxLaps, Math.round(s.laps!)));
@@ -146,7 +192,6 @@ export class Room {
 
   /** 접속해 있는 학생을 조로 나눕니다. 한 조에 다 들어가면 바로 결승입니다. */
   makePlan(): void {
-    this.touch();
     if (this.phase !== 'lobby') return;
     const ids = shuffle([...this.players.values()].filter((p) => p.connected).map((p) => p.id));
     if (ids.length === 0) return;
@@ -186,7 +231,6 @@ export class Room {
   }
 
   start(): void {
-    this.touch();
     if (this.phase !== 'lobby') return;
     if (!this.plan) this.makePlan();
     const plan = this.plan?.[this.planIndex];
@@ -195,9 +239,10 @@ export class Room {
     if (racers.length === 0) return;
     plan.ids = racers;
     this.race = new RaceSim(this.settings.trackId, this.settings.laps, racers);
+    this.raceId = randomHex(4);
     this.phase = 'countdown';
     this.tick = 0;
-    const every = Math.round(PHYS.tickRate / LIMITS.snapRate);
+    const every = Math.max(1, Math.round(PHYS.tickRate / snapRateFor(racers.length)));
     this.timer = setInterval(() => {
       const race = this.race;
       if (!race) return;
@@ -206,11 +251,15 @@ export class Room {
         this.phase = 'racing';
         this.broadcast();
       }
-      if (this.tick++ % every === 0 || ended) this.events.snap(this.code, race.snapshot());
+      if (this.tick++ % every === 0 || ended) this.events.snap(this.snapshot());
       if (ended) this.finishRace();
     }, 1000 / PHYS.tickRate);
     this.broadcast();
-    this.events.snap(this.code, this.race.snapshot());
+    this.events.snap(this.snapshot());
+  }
+
+  private snapshot(): Snap {
+    return { r: this.raceId, ...this.race!.snapshot() };
   }
 
   private stopTimer(): void {
@@ -238,7 +287,6 @@ export class Room {
 
   /** 결과 화면 → 다음 조 대기 / 시상대 */
   next(): void {
-    this.touch();
     if (this.phase !== 'results' || !this.plan) return;
     this.race = null;
     const cur = this.plan[this.planIndex];
@@ -254,7 +302,6 @@ export class Room {
 
   /** 새 대회: 조 편성을 지우고 대기실로 */
   reset(): void {
-    this.touch();
     this.stopTimer();
     this.race = null;
     this.plan = null;
@@ -265,10 +312,43 @@ export class Room {
     this.broadcast();
   }
 
-  close(): void {
+  dispose(): void {
     this.stopTimer();
     this.race = null;
-    this.events.closed(this.code);
+  }
+
+  // ───── 저장 / 불러오기 ─────
+
+  save(): RoomSave {
+    return {
+      code: this.code,
+      settings: this.settings,
+      players: [...this.players.values()].map(({ id, chan, name, color, joinedAt }) => ({ id, chan, name, color, joinedAt })),
+      plan: this.plan,
+      planIndex: this.planIndex,
+      lastResults: this.lastResults,
+      finalResults: this.finalResults,
+      phase: this.phase,
+    };
+  }
+
+  /** 교사 화면을 새로고침했을 때. 달리던 레이스는 이어갈 수 없어 대기실로 돌아갑니다. */
+  restore(s: RoomSave): void {
+    this.settings = { ...this.settings, ...s.settings };
+    this.players.clear();
+    for (const p of s.players) {
+      this.players.set(p.id, { ...p, connected: false, lastSeen: 0, car: emptyCar() });
+    }
+    this.plan = s.plan;
+    this.planIndex = s.planIndex;
+    this.lastResults = s.lastResults;
+    this.finalResults = s.finalResults;
+    this.phase = s.phase === 'podium' ? 'podium' : s.phase === 'results' ? 'results' : 'lobby';
+    if (this.phase === 'results' && !this.lastResults) this.phase = 'lobby';
+    if (this.plan && this.phase === 'lobby') {
+      const cur = this.plan[this.planIndex];
+      if (cur?.results) cur.results = null;
+    }
   }
 
   // ───── 내보내기 ─────
@@ -287,56 +367,18 @@ export class Room {
       planIndex: this.planIndex,
       race: this.race
         ? {
-            trackId: this.race.trackId, laps: this.race.laps, racers: this.race.racers,
+            id: this.raceId, trackId: this.race.trackId, laps: this.race.laps, racers: this.race.racers,
             label: plan?.label ?? '', isFinal: !!plan?.isFinal, startAt: this.race.startAt,
           }
         : null,
       lastResults: this.lastResults,
       finalResults: this.finalResults,
       maxPlayers: LIMITS.maxPlayers,
+      generator: this.generator,
     };
   }
 
   broadcast(): void {
-    this.events.room(this.code, this.view());
-  }
-}
-
-export class RoomManager {
-  rooms = new Map<string, Room>();
-  /** 방이 닫힐 때 호출 (업로드 파일 정리 등) */
-  onClose: ((code: string) => void) | null = null;
-
-  constructor(private events: RoomEvents) {
-    setInterval(() => this.sweep(), 10 * 60 * 1000).unref();
-  }
-
-  create(): Room | string {
-    if (this.rooms.size >= MAX_ROOMS) return '지금은 방을 더 만들 수 없어요. 잠시 후 다시 해 주세요.';
-    let code = '';
-    do code = String(crypto.randomInt(1000, 10000));
-    while (this.rooms.has(code));
-    const room = new Room(code, this.events);
-    this.rooms.set(code, room);
-    return room;
-  }
-
-  get(code: string): Room | undefined {
-    return this.rooms.get(String(code ?? '').trim());
-  }
-
-  close(code: string): void {
-    const room = this.rooms.get(code);
-    if (!room) return;
-    room.close();
-    this.rooms.delete(code);
-    this.onClose?.(code);
-  }
-
-  private sweep(): void {
-    const now = Date.now();
-    for (const [code, room] of this.rooms) {
-      if (now - room.lastActive > ROOM_IDLE_MS) this.close(code);
-    }
+    this.events.room(this.view());
   }
 }

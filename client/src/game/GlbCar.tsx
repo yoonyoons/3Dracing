@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { resolveAsset } from '../net/assets';
 
 const loader = new GLTFLoader();
 const cache = new Map<string, Promise<THREE.Group>>();
@@ -8,7 +9,7 @@ const cache = new Map<string, Promise<THREE.Group>>();
 function load(url: string): Promise<THREE.Group> {
   let p = cache.get(url);
   if (!p) {
-    p = loader.loadAsync(url).then((gltf) => {
+    p = resolveAsset(url).then((u) => loader.loadAsync(u)).then((gltf) => {
       gltf.scene.traverse((o) => {
         const m = o as THREE.Mesh;
         if (m.isMesh) m.frustumCulled = false;

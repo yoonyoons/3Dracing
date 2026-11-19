@@ -1,8 +1,11 @@
-import { Document, Logger, NodeIO, type Node } from '@gltf-transform/core';
+// GLB 후처리. 브라우저(관리자 화면)와 테스트(Node)에서 같은 코드를 씁니다.
+import { Document, Logger, type Node, type PlatformIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import { dedup, flatten, getBounds, prune, simplify, textureCompress, weld } from '@gltf-transform/functions';
+import { dedup, flatten, getBounds, prune, simplify, weld } from '@gltf-transform/functions';
 import { MeshoptDecoder, MeshoptSimplifier } from 'meshoptimizer';
-import sharp from 'sharp';
+
+/** 텍스처 줄이기 (브라우저에서는 canvas 로). 바꿀 필요가 없으면 null */
+export type TextureResizer = (image: Uint8Array, mimeType: string, max: number) => Promise<{ image: Uint8Array; mimeType: string } | null>;
 
 /** 레이스에서 쓰는 차 길이(앞뒤). 물리 반지름과 맞춘 값입니다. */
 export const CAR_LENGTH = 4;
@@ -11,20 +14,12 @@ const MAX_WIDTH = 2.6;
 const MAX_TRIANGLES = 12000;
 const TEXTURE_SIZE = 512;
 
-let ioPromise: Promise<NodeIO> | null = null;
-function getIO(): Promise<NodeIO> {
-  ioPromise ??= (async () => {
-    await MeshoptDecoder.ready;
-    await MeshoptSimplifier.ready;
-    const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.decoder': MeshoptDecoder });
-    try {
-      // Draco 로 압축된 GLB 도 읽을 수 있게 (출력은 압축하지 않아 브라우저에 디코더가 필요 없습니다)
-      const draco = (await import('draco3dgltf')).default;
-      io.registerDependencies({ 'draco3d.decoder': await draco.createDecoderModule() });
-    } catch { /* Draco 없이도 대부분의 GLB 는 읽힙니다 */ }
-    return io;
-  })();
-  return ioPromise;
+/** gltf-transform 의 IO 를 준비합니다 (NodeIO 또는 WebIO 를 넘겨 주세요). */
+export async function prepareIO<T extends PlatformIO>(io: T): Promise<T> {
+  await MeshoptDecoder.ready;
+  await MeshoptSimplifier.ready;
+  io.registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.decoder': MeshoptDecoder });
+  return io;
 }
 
 export function countTriangles(doc: Document): number {
@@ -53,9 +48,8 @@ export interface GlbStats {
  * - 정렬: 가장 긴 수평 방향을 앞뒤(Z)로, 길이를 4로, 바닥을 y=0 으로, 가운데 정렬
  * 앞/뒤가 뒤집혔는지는 모델만 보고 알 수 없어서, 화면의 "앞뒤 바꾸기" 버튼으로 맞춥니다.
  */
-export async function normalizeCarGlb(input: Buffer): Promise<{ glb: Buffer; stats: GlbStats }> {
-  const io = await getIO();
-  const doc = await io.readBinary(new Uint8Array(input));
+export async function normalizeCarGlb(io: PlatformIO, input: Uint8Array, resize?: TextureResizer): Promise<{ glb: Uint8Array; stats: GlbStats }> {
+  const doc = await io.readBinary(input);
   doc.setLogger(new Logger(Logger.Verbosity.SILENT));
   const root = doc.getRoot();
   const scene = root.getDefaultScene() ?? root.listScenes()[0];
@@ -70,8 +64,13 @@ export async function normalizeCarGlb(input: Buffer): Promise<{ glb: Buffer; sta
   if (trianglesIn > MAX_TRIANGLES) {
     await doc.transform(simplify({ simplifier: MeshoptSimplifier, ratio: MAX_TRIANGLES / trianglesIn, error: 0.02 }));
   }
-  if (root.listTextures().length > 0) {
-    await doc.transform(textureCompress({ encoder: sharp, resize: [TEXTURE_SIZE, TEXTURE_SIZE] }));
+  if (resize) {
+    for (const tex of root.listTextures()) {
+      const img = tex.getImage();
+      if (!img) continue;
+      const out = await resize(img, tex.getMimeType() || 'image/png', TEXTURE_SIZE).catch(() => null);
+      if (out) tex.setImage(out.image).setMimeType(out.mimeType);
+    }
   }
   await doc.transform(prune());
 
@@ -99,7 +98,7 @@ export async function normalizeCarGlb(input: Buffer): Promise<{ glb: Buffer; sta
     -s * (b.min[2] + b.max[2]) / 2,
   ]);
 
-  const out = Buffer.from(await io.writeBinary(doc));
+  const out = await io.writeBinary(doc);
   const fb = getBounds(scene);
   return {
     glb: out,
@@ -143,8 +142,7 @@ function addBox(doc: Document, buffer: ReturnType<Document['createBuffer']>, nam
  * 후처리(normalizeCarGlb)가 제대로 도는지 개발 중에 확인할 수 있습니다.
  * @param rgb 차체 색 (0~1). 학생 그림의 대표 색을 넣어 줍니다.
  */
-export async function makeSampleCarGlb(rgb: [number, number, number] = [1, 0.35, 0.37]): Promise<Buffer> {
-  const io = await getIO();
+export async function makeSampleCarGlb(io: PlatformIO, rgb: [number, number, number] = [1, 0.35, 0.37]): Promise<Uint8Array> {
   const doc = new Document();
   const buffer = doc.createBuffer();
   const scene = doc.createScene('sample');
@@ -168,5 +166,5 @@ export async function makeSampleCarGlb(rgb: [number, number, number] = [1, 0.35,
     group.addChild(doc.createNode(name).setMesh(addBox(doc, buffer, name, size, color)).setTranslation(at));
   }
   scene.addChild(group);
-  return Buffer.from(await io.writeBinary(doc));
+  return io.writeBinary(doc);
 }

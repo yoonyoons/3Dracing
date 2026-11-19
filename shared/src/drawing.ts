@@ -1,41 +1,26 @@
-import sharp from 'sharp';
+// 학생 그림 사진에서 종이 배경을 지우는 알고리즘. 픽셀 배열만 다루므로 브라우저와 테스트(Node) 모두에서 돕니다.
 
-export interface ProcessedDrawing {
-  /** 배경을 지운 투명 PNG (차체 텍스처·미리보기용) */
-  cutout: Buffer;
-  /** 흰 배경 PNG (3D 변환 입력용) */
-  clean: Buffer;
-  width: number;
-  height: number;
+export interface DrawingCut {
+  /** 원본 크기의 RGBA (배경은 투명) */
+  rgba: Uint8ClampedArray;
+  /** 잘라낼 영역 */
+  crop: { left: number; top: number; width: number; height: number };
   /** 배경 제거가 잘 됐는지. false 면 그림 전체를 그대로 씁니다. */
   backgroundRemoved: boolean;
   /** 그림의 대표 색 [r,g,b] 0~255 */
   mainColor: [number, number, number];
 }
 
-const WORK = 640;
-const OUT = 512;
 const THRESH = 40;
 
 /**
- * 학생이 올린 사진/이미지를 정리합니다.
- * 1) 회전 보정 + 축소 (사진의 위치 정보 등 메타데이터는 이 과정에서 버려집니다)
- * 2) 가장자리에서 종이색을 추정(조명 기울기 포함)하고, 가장자리와 이어진 종이색 영역을 투명하게
- * 3) 가장 큰 덩어리(자동차)와 그에 준하는 덩어리만 남기고 여백을 잘라냄
+ * 1) 가장자리에서 종이색을 추정(조명 기울기 포함)하고, 가장자리와 이어진 종이색 영역을 투명하게
+ * 2) 가장 큰 덩어리(자동차)와 그에 준하는 덩어리만 남기고 여백을 잘라냄
+ * @param data RGB 3채널 픽셀 (흰 배경으로 합성된 상태)
  */
-export async function processDrawing(input: Buffer, opts: { flip?: boolean } = {}): Promise<ProcessedDrawing> {
-  let pipe = sharp(input, { failOn: 'none', limitInputPixels: 50_000_000 })
-    .rotate()
-    .resize(WORK, WORK, { fit: 'inside', withoutEnlargement: true })
-    .flatten({ background: '#ffffff' })
-    .removeAlpha();
-  if (opts.flip) pipe = pipe.flop();
-  const { data, info } = await pipe.raw().toBuffer({ resolveWithObject: true });
-  const w = info.width;
-  const h = info.height;
+export function cutDrawing(data: ArrayLike<number>, w: number, h: number): DrawingCut {
   if (w < 16 || h < 16) throw new Error('그림이 너무 작아요.');
   const n = w * h;
-
   // 가장자리 띠의 색으로 "종이색 = a + b·x + c·y" 평면을 맞춥니다(조명이 한쪽으로 어두운 사진 대응).
   const ring = Math.max(2, Math.round(Math.min(w, h) * 0.03));
   const fit = [0, 1, 2].map(() => ({ sx: 0, sy: 0, sxx: 0, syy: 0, sxy: 0, sv: 0, sxv: 0, syv: 0, k: 0 }));
@@ -121,7 +106,7 @@ export async function processDrawing(input: Buffer, opts: { flip?: boolean } = {
 
   let fg = 0;
   let minX = w, minY = h, maxX = -1, maxY = -1;
-  const rgba = Buffer.alloc(n * 4);
+  const rgba = new Uint8ClampedArray(n * 4);
   const sum = [0, 0, 0];
   let colorCount = 0;
   for (let p = 0; p < n; p++) {
@@ -157,20 +142,7 @@ export async function processDrawing(input: Buffer, opts: { flip?: boolean } = {
   const pad = removed ? 2 : 0;
   const left = Math.max(0, minX - pad);
   const top = Math.max(0, minY - pad);
-  const cw = Math.min(w - left, maxX - minX + 1 + pad * 2);
-  const ch = Math.min(h - top, maxY - minY + 1 + pad * 2);
-
-  const cropped = sharp(rgba, { raw: { width: w, height: h, channels: 4 } })
-    .extract({ left, top, width: cw, height: ch })
-    .resize(OUT, OUT, { fit: 'inside', withoutEnlargement: true });
-  const cutout = await cropped.clone().png({ compressionLevel: 9 }).toBuffer();
-  const meta = await sharp(cutout).metadata();
-  // 3D 변환기는 "흰 배경 + 여백 있는 정사각형"을 가장 잘 알아봅니다.
-  const side = Math.round(Math.max(meta.width!, meta.height!) * 1.25);
-  const clean = await sharp({ create: { width: side, height: side, channels: 3, background: '#ffffff' } })
-    .composite([{ input: cutout, gravity: 'center' }])
-    .removeAlpha()
-    .png()
-    .toBuffer();
-  return { cutout, clean, width: meta.width!, height: meta.height!, backgroundRemoved: removed, mainColor };
+  const width = Math.min(w - left, maxX - minX + 1 + pad * 2);
+  const height = Math.min(h - top, maxY - minY + 1 + pad * 2);
+  return { rgba, crop: { left, top, width, height }, backgroundRemoved: removed, mainColor };
 }

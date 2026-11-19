@@ -196,3 +196,9 @@ a.btn { text-decoration: none; display: inline-block; }
 label.btn { display: inline-block; }
 
 input.field.narrow { width: min(320px, 100%); }
+.notice-line { font-weight: 700; }
+.settings-card summary { cursor: pointer; font-size: 17px; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 14px 0 6px; }
+.settings-grid label { display: flex; flex-direction: column; gap: 6px; font-weight: 700; }
+.settings-grid small { font-weight: 500; opacity: 0.65; }
+.field.small, select.field.small { font-size: 17px; padding: 10px 12px; text-align: left; border-width: 3px; }
