@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { LIMITS, TRACK_LIST, getTrack, type RaceResult, type RoomView } from '@racing/shared';
 import { HostController } from '../net/host';
@@ -9,6 +9,7 @@ import { Countdown, formatTime } from '../game/Hud';
 import type { CameraMode, CarLook } from '../game/types';
 import { navigate } from '../router';
 import { PodiumScene, Showroom } from '../game/Showroom';
+import { MuteButton, sfx, unlockSound } from '../game/sound';
 
 export function looksOf(room: RoomView, ids?: string[]): CarLook[] {
   return room.players
@@ -175,6 +176,7 @@ function HostLobby({ host, room, onClose }: { host: HostController; room: RoomVi
         <div className="host-head">
           <h2>참가자 {online}명 <small>/ 최대 {room.maxPlayers}명</small></h2>
           <div className="row">
+            <MuteButton />
             <button className="btn small white" onClick={() => navigate('/admin')}>관리자</button>
             <button className="btn small danger" onClick={close}>방 닫기</button>
           </div>
@@ -247,7 +249,7 @@ function HostLobby({ host, room, onClose }: { host: HostController; room: RoomVi
           )}
           {(room.plan || !needHeats) && (
             <button className="btn primary big-inline" disabled={online === 0 || (!!next && next.ids.length === 0)}
-              onClick={() => host.start()}>
+              onClick={() => { unlockSound(); host.start(); }}>
               🏁 {next ? `${next.label} 출발!` : '레이스 시작!'}
             </button>
           )}
@@ -266,6 +268,24 @@ function HostRace({ host, room }: { host: HostController; room: RoomView }) {
   const track = useMemo(() => getTrack(race?.trackId ?? room.settings.trackId), [race, room.settings.trackId]);
   const nameOf = (id: string) => room.players.find((p) => p.id === id);
   const plan = room.plan?.[room.planIndex];
+
+  // 효과음: 3·2·1·출발, 한 대씩 도착할 때
+  const heard = useRef({ count: 99, finished: new Set<string>() });
+  useEffect(() => {
+    const h = heard.current;
+    const n = live.countdown;
+    if (room.phase !== 'results' && n <= 3 && n >= 0 && n < h.count) {
+      h.count = n;
+      sfx.countdown(n);
+    }
+    if (!stream) return;
+    for (const id of race?.racers ?? []) {
+      if (!h.finished.has(id) && stream.latest(id)?.finished) {
+        h.finished.add(id);
+        sfx.finish();
+      }
+    }
+  }, [live, stream, race, room.phase]);
   const hasMore = !!room.plan && !plan?.isFinal;
 
   return (
@@ -284,6 +304,7 @@ function HostRace({ host, room }: { host: HostController; room: RoomView }) {
         <div className="hud-chip">⏱ {formatTime(live.time)}</div>
         <div className="hud-chip">🏁 {race?.laps}바퀴</div>
         <span className="spacer" />
+        <MuteButton />
         <button className="btn small white" onClick={() => setCam(cam === 'follow' ? 'overview' : 'follow')}>
           📷 {cam === 'follow' ? '전체 보기' : '1등 따라가기'}
         </button>
@@ -324,6 +345,7 @@ function HostPodium({ host, room }: { host: HostController; room: RoomView }) {
   const medal = ['🥇', '🥈', '🥉'];
   const all = looksOf(room);
   const top = results.slice(0, 3).map((r) => all.find((l) => l.id === r.id)).filter((l): l is CarLook => !!l);
+  useEffect(() => { sfx.fanfare(); }, []);
   return (
     <div className="page center podium-page">
       <div className="confetti" aria-hidden>
