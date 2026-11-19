@@ -3,6 +3,7 @@ import {
   Room, type CarView, type JoinRequest, type PlayerMessage, type RoomSave, type RoomSettings, type RoomView,
 } from '@racing/shared';
 import { closeChannel, loadJson, openChannel, rpc, saveJson, send } from './supabase';
+import { workerTicker } from './workerTicker';
 
 const KEY = 'racing.host';
 
@@ -50,7 +51,7 @@ export class HostController {
     this.room = new Room(code, {
       room: (v) => this.onRoom(v),
       snap: (s) => send(this.race, 'snap', s),
-    });
+    }, workerTicker);
     if (saved) this.room.restore(saved);
     this.view = this.room.view();
   }
@@ -92,6 +93,7 @@ export class HostController {
     ]);
     await Promise.all([...this.room.players.values()].map((p) => this.listenTo(p.id, p.chan).catch(() => {})));
     this.timers.push(
+      // 접속 확인도 탭이 뒤로 가면 늦어지지만, 몇 초 늦는 건 괜찮습니다.
       setInterval(() => this.room.checkOffline(), 5000),
       setInterval(() => void this.pollCars(), 4000),
       setInterval(() => void rpc('race_host_touch', { p_code: code, p_secret: this.secret }).catch(() => {}), 10 * 60 * 1000),

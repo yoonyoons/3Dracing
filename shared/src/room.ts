@@ -50,6 +50,14 @@ interface Plan {
   results: RaceResult[] | null;
 }
 
+/** 일정 간격으로 fn 을 부르고, 멈추는 함수를 돌려줍니다. */
+export type Ticker = (fn: () => void, ms: number) => () => void;
+
+const intervalTicker: Ticker = (fn, ms) => {
+  const t = setInterval(fn, ms);
+  return () => clearInterval(t);
+};
+
 export interface RoomEvents {
   /** 방 상태가 바뀜 → 모두에게 알림 */
   room(view: RoomView): void;
@@ -82,10 +90,14 @@ export class Room {
   lastResults: RaceResult[] | null = null;
   finalResults: RaceResult[] | null = null;
   generator: RoomView['generator'] = 'pregenerated';
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private stopTicker: (() => void) | null = null;
   private tick = 0;
 
-  constructor(readonly code: string, private events: RoomEvents) {}
+  /**
+   * @param ticker 레이스 계산 주기를 만드는 함수. 브라우저에서는 탭이 뒤로 가도 느려지지 않도록
+   *               Web Worker 타이머를 넘겨 줍니다. 없으면 setInterval.
+   */
+  constructor(readonly code: string, private events: RoomEvents, private ticker: Ticker = intervalTicker) {}
 
   // ───── 참가자 ─────
 
@@ -243,7 +255,7 @@ export class Room {
     this.phase = 'countdown';
     this.tick = 0;
     const every = Math.max(1, Math.round(PHYS.tickRate / snapRateFor(racers.length)));
-    this.timer = setInterval(() => {
+    this.stopTicker = this.ticker(() => {
       const race = this.race;
       if (!race) return;
       const ended = race.advance();
@@ -263,8 +275,8 @@ export class Room {
   }
 
   private stopTimer(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.stopTicker?.();
+    this.stopTicker = null;
   }
 
   private finishRace(): void {
