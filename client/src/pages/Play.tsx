@@ -152,6 +152,7 @@ function PlayLobby({ ctl, room, onLeave }: { ctl: PlayerController; room: RoomVi
         <div className="me-room">방 {room.code}</div>
       </div>
       <div className="card status-card">{status}</div>
+      {racingNow && room.race && !room.race.racers.includes(me.playerId) && <Watching room={room} />}
       {mine && <MyCar ctl={ctl} room={room} />}
       {room.phase === 'results' && room.lastResults && myResult && (
         <div className="card result"><ResultList results={room.lastResults} meId={me.playerId} /></div>
@@ -291,6 +292,26 @@ function MyCar({ ctl, room }: { ctl: PlayerController; room: RoomView }) {
           <li>이름이나 얼굴은 그리지 않아요.</li>
         </ul>
       )}
+    </div>
+  );
+}
+
+/** 다른 조가 달리는 동안: 누가 달리는지 보여 줍니다(이미 받는 방 상태만 씀, 메시지 추가 없음). */
+function Watching({ room }: { room: RoomView }) {
+  const race = room.race!;
+  const looks = useMemo(() => looksOf(room, race.racers), [room, race]);
+  return (
+    <div className="card watching">
+      <b className="mycar-title">📣 지금 달리는 친구들</b>
+      <small className="hint">{race.label} · {race.laps}바퀴</small>
+      <Showroom looks={looks} labels className="watch-view" />
+      <div className="watch-names">
+        {race.racers.map((id) => {
+          const p = room.players.find((x) => x.id === id);
+          return p ? <span key={id} className="watch-chip" style={{ borderColor: p.color }}><span className="dot" style={{ background: p.color }} />{p.name}</span> : null;
+        })}
+      </div>
+      <small className="hint">순위는 큰 화면에서 확인해요!</small>
     </div>
   );
 }

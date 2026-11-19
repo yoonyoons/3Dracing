@@ -202,3 +202,9 @@ input.field.narrow { width: min(320px, 100%); }
 .settings-grid label { display: flex; flex-direction: column; gap: 6px; font-weight: 700; }
 .settings-grid small { font-weight: 500; opacity: 0.65; }
 .field.small, select.field.small { font-size: 17px; padding: 10px 12px; text-align: left; border-width: 3px; }
+
+/* 다른 조 응원 */
+.watching { width: min(440px, 100%); display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center; }
+.watch-view { width: 100% !important; height: 170px !important; background: linear-gradient(#fff6d6, #eaf7ff); border-radius: 16px; }
+.watch-names { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.watch-chip { display: inline-flex; align-items: center; gap: 6px; border: 3px solid; border-radius: 999px; padding: 4px 10px; font-weight: 800; background: #fff; }
